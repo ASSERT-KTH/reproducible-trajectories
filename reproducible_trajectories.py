@@ -9,6 +9,7 @@ Commands:
     modified-files       Extract modified files from a trajectory
     read-files           Extract files read during a trajectory
     filter-trajectories  Remove tool calls related to specified files/folders
+    verify-trajectories  Check whether trajectory ops reproduce git commits
 """
 
 import sys
@@ -19,6 +20,7 @@ COMMANDS = {
     "modified-files": "modified-files",
     "read-files": "read-files",
     "filter-trajectories": "filter-trajectories",
+    "verify-trajectories": "verify-trajectories",
 }
 
 

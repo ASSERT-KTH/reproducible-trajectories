@@ -10,7 +10,9 @@ Subcommands:
 import argparse
 import json
 import os
+import re
 import shlex
+import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -418,6 +420,255 @@ def filter_trajectory(trajectory_path, exclude_paths=None, cwd=None):
 
 
 # ---------------------------------------------------------------------------
+# verify-trajectories
+# ---------------------------------------------------------------------------
+
+_TRAJ_PATTERNS = [
+    re.compile(r'<trajectory>([^<\s]+)</trajectory>'),
+    re.compile(r'trajectory:\s*(\S+)', re.IGNORECASE),
+]
+
+
+def _git(args, cwd):
+    r = subprocess.run(['git'] + args, capture_output=True, cwd=cwd)
+    return r.returncode, r.stdout.decode('utf-8', errors='replace')
+
+
+def _get_commits(repo):
+    rc, out = _git(['log', '--format=%H%x00%B%x01', '--reverse'], repo)
+    if rc != 0:
+        return []
+    commits = []
+    for block in out.split('\x01'):
+        if '\x00' not in block:
+            continue
+        hash_, _, message = block.partition('\x00')
+        hash_ = hash_.strip()
+        if hash_:
+            commits.append((hash_, message))
+    return commits
+
+
+def _get_parent(repo, h):
+    rc, out = _git(['rev-parse', f'{h}^'], repo)
+    if rc != 0:
+        return None
+    return out.strip()
+
+
+def _file_at(repo, h, rel):
+    rc, out = _git(['show', f'{h}:{rel}'], repo)
+    if rc != 0:
+        return None
+    return out
+
+
+def _changed_files(repo, h):
+    rc, out = _git(['diff-tree', '--no-commit-id', '-r', '--name-only', h], repo)
+    if rc != 0:
+        return []
+    return [line for line in out.splitlines() if line]
+
+
+def _extract_trajectory_ref(message):
+    for pattern in _TRAJ_PATTERNS:
+        m = pattern.search(message)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _simulate_ops(ops, states):
+    """
+    Simulate Write/Edit operations on file states.
+    ops: list of {tool, input} for Write / Edit / NotebookEdit
+    states: {abs_path: str|None}  (None = file didn't exist)
+    NotebookEdit is skipped (complex JSON; can't reliably simulate).
+    Returns mutated copy of states.
+    """
+    states = dict(states)
+    for op in ops:
+        tool = op['tool']
+        inp = op['input']
+        if tool == 'Write':
+            fp = inp.get('file_path', '')
+            content = inp.get('content', '')
+            if fp:
+                states[fp] = content
+        elif tool == 'Edit':
+            fp = inp.get('file_path', '')
+            old_string = inp.get('old_string', '')
+            new_string = inp.get('new_string', '')
+            replace_all = inp.get('replace_all', False)
+            if fp and fp in states and states[fp] is not None:
+                current = states[fp]
+                if replace_all:
+                    states[fp] = current.replace(old_string, new_string)
+                else:
+                    states[fp] = current.replace(old_string, new_string, 1)
+        # NotebookEdit: skip
+    return states
+
+
+def _rel(abs_path, session_cwd):
+    try:
+        return str(Path(abs_path).relative_to(session_cwd))
+    except ValueError:
+        return None
+
+
+def verify_trajectories(repo_path, claude_dir=None):
+    """
+    Walk repo commits, find those with trajectory refs, simulate their
+    Write/Edit ops on the parent-commit state, and check whether the result
+    matches the actual commit.
+
+    Returns list of dicts:
+      commit, short_message, trajectory, status, files (optional)
+
+    status values:
+      'trajectory_not_found'  — ref resolved to non-existent file
+      'no_operations'         — trajectory has no Write/Edit ops
+      'reproducible'          — all verifiable files match
+      'not_reproducible'      — at least one file mismatches
+    """
+    if claude_dir is None:
+        claude_dir = str(Path.home() / '.claude')
+    repo_path = str(Path(repo_path).resolve())
+
+    results = []
+
+    for commit_hash, message in _get_commits(repo_path):
+        ref = _extract_trajectory_ref(message)
+        if not ref:
+            continue
+
+        short_msg = message.splitlines()[0][:72] if message else ''
+
+        traj_path = resolve_trajectory_path(ref, claude_dir)
+        if not os.path.exists(traj_path):
+            results.append({
+                'commit': commit_hash[:12],
+                'short_message': short_msg,
+                'trajectory': ref,
+                'status': 'trajectory_not_found',
+            })
+            continue
+
+        events = parse_trajectory(traj_path)
+        sequence, _tool_uses = build_sequence(events)
+        _, session_cwd = get_session_info(events)
+
+        # Collect all Write/Edit/NotebookEdit ops in sequence order
+        ops = []
+        for s in sequence:
+            if s['seq_type'] != 'tool_use':
+                continue
+            item = s['item']
+            name = item.get('name')
+            if name not in ('Write', 'Edit', 'NotebookEdit'):
+                continue
+            ops.append({'tool': name, 'input': item.get('input', {})})
+
+        # no_operations means no Write/Edit ops (NotebookEdit doesn't count)
+        if not any(op['tool'] in ('Write', 'Edit') for op in ops):
+            results.append({
+                'commit': commit_hash[:12],
+                'short_message': short_msg,
+                'trajectory': ref,
+                'status': 'no_operations',
+            })
+            continue
+
+        # Determine which files are touched only by NotebookEdit (unverifiable)
+        notebook_only = set()
+        write_edit_files = set()
+        for op in ops:
+            tool = op['tool']
+            inp = op['input']
+            fp = inp.get('notebook_path' if tool == 'NotebookEdit' else 'file_path', '')
+            if not fp:
+                continue
+            if tool == 'NotebookEdit':
+                if fp not in write_edit_files:
+                    notebook_only.add(fp)
+            else:
+                write_edit_files.add(fp)
+                notebook_only.discard(fp)
+
+        # Get parent commit
+        parent = _get_parent(repo_path, commit_hash)
+
+        # Build initial states for all files touched by ops
+        initial_states = {}
+        file_rels = {}  # fp -> rel path string or None
+
+        for op in ops:
+            tool = op['tool']
+            inp = op['input']
+            fp = inp.get('notebook_path' if tool == 'NotebookEdit' else 'file_path', '')
+            if not fp or fp in initial_states:
+                continue
+            rel = _rel(fp, session_cwd) if session_cwd else None
+            file_rels[fp] = rel
+            if rel is not None and parent:
+                initial_states[fp] = _file_at(repo_path, parent, rel)
+            else:
+                initial_states[fp] = None
+
+        # Simulate Write/Edit ops (NotebookEdit is silently skipped)
+        simulated = _simulate_ops(ops, initial_states)
+
+        # Compare simulated states with actual commit
+        file_results = []
+        any_mismatch = False
+
+        for fp, sim_content in simulated.items():
+            rel = file_rels.get(fp)
+
+            # Files only modified by NotebookEdit are unverifiable
+            if fp in notebook_only:
+                file_results.append({'file': rel or fp, 'status': 'unverifiable'})
+                continue
+
+            # Path outside session cwd
+            if session_cwd is not None and rel is None:
+                file_results.append({'file': fp, 'status': 'outside_repo'})
+                continue
+
+            # session_cwd unknown — can't map to repo-relative path
+            if rel is None:
+                file_results.append({'file': fp, 'status': 'unverifiable'})
+                continue
+
+            # Check whether the absolute path falls within the repo
+            try:
+                Path(fp).resolve().relative_to(repo_path)
+            except ValueError:
+                file_results.append({'file': rel, 'status': 'outside_repo'})
+                continue
+
+            actual_content = _file_at(repo_path, commit_hash, rel)
+
+            if sim_content == actual_content:
+                file_results.append({'file': rel, 'status': 'match'})
+            else:
+                file_results.append({'file': rel, 'status': 'mismatch'})
+                any_mismatch = True
+
+        status = 'not_reproducible' if any_mismatch else 'reproducible'
+        results.append({
+            'commit': commit_hash[:12],
+            'short_message': short_msg,
+            'trajectory': ref,
+            'status': status,
+            'files': file_results,
+        })
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -450,6 +701,18 @@ def main(argv=None):
     )
     _add_common_args(p_read)
 
+    p_verify = subparsers.add_parser(
+        "verify-trajectories",
+        help="Check whether trajectory ops reproduce the actual commit",
+    )
+    p_verify.add_argument("repo", help="Path to the git repository")
+    p_verify.add_argument(
+        "--claude-dir",
+        default=None,
+        help="Path to .claude directory (default: ~/.claude)",
+    )
+    p_verify.add_argument("--json", action="store_true", help="Output results as JSON")
+
     p_filter = subparsers.add_parser(
         "filter-trajectories",
         help="Remove tool calls related to specified files/folders",
@@ -478,6 +741,19 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
     claude_dir = Path(args.claude_dir or Path.home() / ".claude")
+
+    if args.command == "verify-trajectories":
+        results = verify_trajectories(args.repo, claude_dir=str(claude_dir))
+        if args.json:
+            print(json.dumps(results, indent=2))
+            return
+        if not results:
+            print("No trajectory-tagged commits found.")
+            return
+        for r in results:
+            print(f"{r['commit']}  {r['status']:<22}  {r['trajectory']}  {r['short_message']}")
+        return
+
     trajectory_path = resolve_trajectory_path(args.trajectory, str(claude_dir))
 
     if args.command == "modified-files":
