@@ -36,6 +36,9 @@ def validate_identifier(identifier, claude_dir):
 
 
 def check_commit_message(msg, claude_dir):
+    if re.search(r"\bno trajectory\b", msg, re.I):
+        return True, None
+
     candidates = []
     for m in TRAJECTORY_LABEL_RE.finditer(msg):
         candidates.append(m.group(1))
@@ -74,6 +77,7 @@ def main():
         print("  trajectory: <uuid>", file=sys.stderr)
         print("  trajectory: <path/to/trajectory.jsonl>", file=sys.stderr)
         print("  <trajectory><uuid></trajectory>", file=sys.stderr)
+        print("or include 'no trajectory' to skip this check", file=sys.stderr)
         sys.exit(1)
 
 
