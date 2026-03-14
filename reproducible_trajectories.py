@@ -6,8 +6,9 @@ Usage:
     python reproducible_trajectories.py <command> [args...]
 
 Commands:
-    modified-files   Extract modified files from a trajectory
-    read-files       Extract files read during a trajectory
+    modified-files       Extract modified files from a trajectory
+    read-files           Extract files read during a trajectory
+    filter-trajectories  Remove tool calls related to specified files/folders
 """
 
 import sys
@@ -17,6 +18,7 @@ import os
 COMMANDS = {
     "modified-files": "modified-files",
     "read-files": "read-files",
+    "filter-trajectories": "filter-trajectories",
 }
 
 

@@ -321,6 +321,103 @@ def analyze_read_files(trajectory_path):
 
 
 # ---------------------------------------------------------------------------
+# filter-trajectories
+# ---------------------------------------------------------------------------
+
+def _tool_use_file_path(item):
+    """Return the primary file/directory path from a tool_use item, or None."""
+    name = item.get("name")
+    inp = item.get("input", {})
+    if name in ("Read", "Write", "Edit"):
+        return inp.get("file_path")
+    if name == "NotebookEdit":
+        return inp.get("notebook_path")
+    if name in ("Glob", "Grep"):
+        return inp.get("path")
+    return None
+
+
+def filter_trajectory(trajectory_path, exclude_paths=None, cwd=None):
+    """
+    Return filtered events with tool calls referencing excluded paths removed.
+
+    exclude_paths: list of file/folder paths to exclude.
+                   If None, exclude everything outside `cwd`.
+    cwd:           Base directory for the "outside" check.
+                   Defaults to the session cwd, then os.getcwd().
+    """
+    events = parse_trajectory(trajectory_path)
+    _session_id, session_cwd = get_session_info(events)
+    effective_cwd = cwd or session_cwd or os.getcwd()
+
+    if exclude_paths is None:
+        # Exclude files that are NOT under effective_cwd
+        cwd_path = Path(effective_cwd).resolve()
+
+        def should_exclude(file_path):
+            if not file_path:
+                return False
+            try:
+                Path(file_path).resolve().relative_to(cwd_path)
+                return False
+            except ValueError:
+                return True
+    else:
+        excl_resolved = [str(Path(p).resolve()) for p in exclude_paths]
+
+        def should_exclude(file_path):
+            if not file_path:
+                return False
+            resolved = str(Path(file_path).resolve())
+            return any(
+                resolved == e or resolved.startswith(e + os.sep)
+                for e in excl_resolved
+            )
+
+    # First pass: collect IDs of tool_use items that reference excluded paths
+    excluded_ids = set()
+    for event in events:
+        msg = event.get("message", {})
+        for item in msg.get("content") or []:
+            if not isinstance(item, dict) or item.get("type") != "tool_use":
+                continue
+            fp = _tool_use_file_path(item)
+            if fp and should_exclude(fp):
+                excluded_ids.add(item["id"])
+
+    # Second pass: rebuild events without excluded tool_use / tool_result pairs
+    filtered = []
+    for event in events:
+        msg = event.get("message")
+        if not msg:
+            filtered.append(event)
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            filtered.append(event)
+            continue
+
+        new_content = [
+            item for item in content
+            if not isinstance(item, dict) or (
+                not (item.get("type") == "tool_use"
+                     and item.get("id") in excluded_ids)
+                and not (item.get("type") == "tool_result"
+                         and item.get("tool_use_id") in excluded_ids)
+            )
+        ]
+
+        if new_content == content:
+            filtered.append(event)
+        elif new_content:
+            new_event = {**event, "message": {**msg, "content": new_content}}
+            filtered.append(new_event)
+        # else: all content items were filtered out — drop the event entirely
+
+    return filtered
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -353,6 +450,32 @@ def main(argv=None):
     )
     _add_common_args(p_read)
 
+    p_filter = subparsers.add_parser(
+        "filter-trajectories",
+        help="Remove tool calls related to specified files/folders",
+    )
+    p_filter.add_argument("trajectory", help="Path to trajectory JSONL file, or session ID")
+    p_filter.add_argument(
+        "paths",
+        nargs="*",
+        help="Files/folders to exclude (if omitted, exclude files outside cwd)",
+    )
+    p_filter.add_argument(
+        "--claude-dir",
+        default=None,
+        help="Path to .claude directory (default: ~/.claude)",
+    )
+    p_filter.add_argument(
+        "--cwd",
+        default=None,
+        help="Base directory for 'outside' check (default: session cwd or current dir)",
+    )
+    p_filter.add_argument(
+        "--output", "-o",
+        default=None,
+        help="Output file (default: stdout)",
+    )
+
     args = parser.parse_args(argv)
     claude_dir = Path(args.claude_dir or Path.home() / ".claude")
     trajectory_path = resolve_trajectory_path(args.trajectory, str(claude_dir))
@@ -378,6 +501,20 @@ def main(argv=None):
             return
         for r in results:
             print(f"{r['file_path']}: {r['read_type']}")
+
+    elif args.command == "filter-trajectories":
+        filtered = filter_trajectory(
+            trajectory_path,
+            exclude_paths=args.paths or None,
+            cwd=args.cwd,
+        )
+        out = open(args.output, "w") if args.output else sys.stdout
+        try:
+            for event in filtered:
+                out.write(json.dumps(event) + "\n")
+        finally:
+            if args.output:
+                out.close()
 
 
 if __name__ == "__main__":
