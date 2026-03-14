@@ -14,6 +14,7 @@ import os
 
 COMMANDS = {
     "extract-modified-files": "src.extract_modified_files",
+    "extract-read-files": "src.extract_read_files",
 }
 
 
