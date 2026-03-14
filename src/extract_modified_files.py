@@ -188,7 +188,7 @@ def resolve_trajectory_path(trajectory_arg, claude_dir):
     return trajectory_arg
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Extract modified files from a Claude Code trajectory"
     )
@@ -201,12 +201,21 @@ def main():
         default=None,
         help="Path to .claude directory (default: ~/.claude)",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results as JSON",
+    )
+    args = parser.parse_args(argv)
 
     claude_dir = Path(args.claude_dir or Path.home() / ".claude")
     trajectory_path = resolve_trajectory_path(args.trajectory, claude_dir)
 
     results = analyze(trajectory_path, claude_dir)
+
+    if args.json:
+        print(json.dumps(results, indent=2))
+        return
 
     if not results:
         print("No file modifications found in trajectory.")
