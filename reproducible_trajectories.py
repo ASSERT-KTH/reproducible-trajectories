@@ -6,15 +6,17 @@ Usage:
     python reproducible_trajectories.py <command> [args...]
 
 Commands:
-    extract-modified-files   Extract modified files from a trajectory
+    modified-files   Extract modified files from a trajectory
+    read-files       Extract files read during a trajectory
 """
 
 import sys
 import os
 
+# Map external command names to the subcommand passed to src/trajectory.py
 COMMANDS = {
-    "extract-modified-files": "src.extract_modified_files",
-    "extract-read-files": "src.extract_read_files",
+    "modified-files": "modified-files",
+    "read-files": "read-files",
 }
 
 
@@ -40,13 +42,9 @@ def main():
     # Add src/ to path so modules are importable
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-    module_path = COMMANDS[command]
-    # Strip "src." prefix since we added src/ to sys.path
-    module_name = module_path.removeprefix("src.")
-
     import importlib
-    mod = importlib.import_module(module_name)
-    mod.main(sys.argv[2:])
+    mod = importlib.import_module("trajectory")
+    mod.main([COMMANDS[command]] + sys.argv[2:])
 
 
 if __name__ == "__main__":
