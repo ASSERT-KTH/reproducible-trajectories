@@ -21,6 +21,7 @@ COMMANDS = {
     "read-files": "read-files",
     "filter-trajectories": "filter-trajectories",
     "verify-trajectories": "verify-trajectories",
+    "add-trajectories-to-repo": "add-trajectories-to-repo",
 }
 
 

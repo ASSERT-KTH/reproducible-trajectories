@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from collections import defaultdict
@@ -669,6 +670,85 @@ def verify_trajectories(repo_path, claude_dir=None):
 
 
 # ---------------------------------------------------------------------------
+# add-trajectories-to-repo
+# ---------------------------------------------------------------------------
+
+def add_trajectories_to_repo(repo_path, claude_dir=None, dry_run=False):
+    """
+    For each trajectory referenced in commits, copy it to <repo>/trajectories/
+    if and only if all files it reads are within the repo.
+
+    Returns list of dicts: {trajectory, status, dest (optional)}
+    status values:
+      'added'           — trajectory copied to trajectories/
+      'already_exists'  — trajectory file already present in trajectories/
+      'skipped_private' — trajectory reads files outside the repo
+      'not_found'       — trajectory file could not be resolved
+    """
+    if claude_dir is None:
+        claude_dir = str(Path.home() / '.claude')
+    repo_path = str(Path(repo_path).resolve())
+    repo_root = Path(repo_path)
+
+    results = []
+    seen_refs = set()
+
+    for _commit_hash, message in _get_commits(repo_path):
+        ref = _extract_trajectory_ref(message)
+        if not ref or ref in seen_refs:
+            continue
+        seen_refs.add(ref)
+
+        traj_path = resolve_trajectory_path(ref, claude_dir)
+        if not os.path.exists(traj_path):
+            results.append({'trajectory': ref, 'status': 'not_found'})
+            continue
+
+        dest_name = Path(traj_path).name
+        dest = repo_root / 'trajectories' / dest_name
+
+        if dest.exists():
+            results.append({
+                'trajectory': ref,
+                'status': 'already_exists',
+                'dest': str(dest.relative_to(repo_root)),
+            })
+            continue
+
+        # Check that every file read is within the repo
+        events = parse_trajectory(traj_path)
+        _, session_cwd = get_session_info(events)
+        read_files = analyze_read_files(traj_path)
+
+        all_in_repo = True
+        for r in read_files:
+            fp = r['file_path']
+            if not os.path.isabs(fp):
+                if session_cwd:
+                    fp = str(Path(session_cwd) / fp)
+                else:
+                    all_in_repo = False
+                    break
+            try:
+                Path(fp).resolve().relative_to(repo_root)
+            except ValueError:
+                all_in_repo = False
+                break
+
+        if not all_in_repo:
+            results.append({'trajectory': ref, 'status': 'skipped_private'})
+            continue
+
+        dest_rel = str(dest.relative_to(repo_root))
+        if not dry_run:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(traj_path, dest)
+        results.append({'trajectory': ref, 'status': 'added', 'dest': dest_rel})
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -713,6 +793,23 @@ def main(argv=None):
     )
     p_verify.add_argument("--json", action="store_true", help="Output results as JSON")
 
+    p_add = subparsers.add_parser(
+        "add-trajectories-to-repo",
+        help="Copy repo-safe trajectories into <repo>/trajectories/",
+    )
+    p_add.add_argument("repo", help="Path to the git repository")
+    p_add.add_argument(
+        "--claude-dir",
+        default=None,
+        help="Path to .claude directory (default: ~/.claude)",
+    )
+    p_add.add_argument("--json", action="store_true", help="Output results as JSON")
+    p_add.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would be copied without writing anything",
+    )
+
     p_filter = subparsers.add_parser(
         "filter-trajectories",
         help="Remove tool calls related to specified files/folders",
@@ -752,6 +849,23 @@ def main(argv=None):
             return
         for r in results:
             print(f"{r['commit']}  {r['status']:<22}  {r['trajectory']}  {r['short_message']}")
+        return
+
+    if args.command == "add-trajectories-to-repo":
+        results = add_trajectories_to_repo(
+            args.repo,
+            claude_dir=str(claude_dir),
+            dry_run=args.dry_run,
+        )
+        if args.json:
+            print(json.dumps(results, indent=2))
+            return
+        if not results:
+            print("No trajectory-tagged commits found.")
+            return
+        for r in results:
+            dest = r.get('dest', '')
+            print(f"{r['trajectory'][:36]:<38}  {r['status']:<16}  {dest}")
         return
 
     trajectory_path = resolve_trajectory_path(args.trajectory, str(claude_dir))
