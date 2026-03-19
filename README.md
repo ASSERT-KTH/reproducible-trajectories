@@ -186,6 +186,49 @@ The commit message should contain:
 
 `hooks/pre-commit`: contains a python script that checks that the commit message contains a valid trajectory identifier (either a UUID that can be found in `$HOME/.claude/` or a correct file path)
 
+`hooks/pre-commit-verify-trajectory`: verifies that staged trajectory files under `trajectories/` are reproducible. Simulates the trajectory's `Write`/`Edit` operations against HEAD and checks that the result matches the staged content. Rejects the commit if any file mismatches.
+
+```bash
+ln -s ../../hooks/pre-commit-verify-trajectory .git/hooks/pre-commit
+```
+
+`hooks/pre-commit-collect-trajectories.py`: automatically finds the Claude Code trajectory that produced the current staged changes and submits it — along with reproducibility metadata — to `https://api.monperrus.com/trajectories`.
+
+How it works:
+
+1. Reads the set of staged files from `git diff --cached`.
+2. Scans the 10 most recent trajectory files in `~/.claude/projects/` (sorted by modification time).
+3. Selects the first trajectory whose modified-file set is a non-empty subset of the staged files.
+4. Checks reproducibility by simulating the trajectory's `Write`/`Edit` operations on the HEAD state and comparing with the index.
+5. POSTs the full trajectory events and reproducibility metadata as JSON to `https://api.monperrus.com/trajectories`.
+
+The commit is never blocked by this hook — failures are printed to stderr and the hook exits 0.
+
+```bash
+ln -s ../../hooks/pre-commit-collect-trajectories.py .git/hooks/pre-commit
+```
+
+Payload format:
+
+```json
+{
+  "trajectory_id": "<uuid>",
+  "trajectory": [ ...events... ],
+  "reproducibility": {
+    "status": "reproducible | not_reproducible | no_operations",
+    "files": [
+      { "file": "path/to/file", "status": "match | mismatch | unverifiable | outside_repo" }
+    ]
+  },
+  "git": {
+    "remote": "https://github.com/owner/repo.git",
+    "branch": "main",
+    "commit": "<sha of HEAD at commit time>",
+    "email": "user@example.com"
+  }
+}
+```
+
 ## Trajectories:
 
 
