@@ -1,12 +1,33 @@
-# reproducible-trajectories
+# the reproducible-trajectories project
 
-**Author: Martin Monperrus**
+When a coding agent edits your codebase, it produces a *trajectory*: a complete, structured log of every file it read, every edit it made, and every tool it called. 
 
-When Claude Code edits your codebase, it produces a *trajectory*: a complete, structured log of every file it read, every edit it made, and every tool it called. This repository provides tooling to embed trajectory references in git commits and to verify that replaying a trajectory faithfully reproduces the committed changes.
+Trajectories represent **critical data for understanding and improving how AI coding agents work**. Yet this data is almost never captured or shared. With trajectory data, we could conduct unprecedented research:
 
-The core idea: a git commit produced by an AI agent should be as reproducible as one produced by a deterministic build system. Tag your commit with a trajectory ID, store the trajectory alongside the code, and anyone — human or machine — can replay the session step by step and check that the output matches. No black boxes.
+- **Agent reasoning patterns**: How do different agents plan, navigate large codebases, and recover from errors?
+- **Code quality outcomes**: What trajectory characteristics (e.g., number of reads, edit order, tool sequences) correlate with high-quality commits?
+- **Human-AI collaboration**: How do human developers interact with agent trajectories and what edits matter most to them?
+- **Optimization**: What makes agents efficient? Can we predict trajectory complexity from the problem statement?
+- **Testing and verification**: Do agents that read more tests write better code? What's the relationship between exploration and correctness?
 
-**In short: source code has compilers; AI-generated commits should have trajectories.**
+Without trajectory data, software engineering researchers like us can only observe the final commit. We're analyzing outcomes without understanding the process.
+
+This repository provides tooling and a central database for storing trajectories. It is designed to be collaborative and crowd-sourced — so you can contribute to science!
+
+## Join the movement!
+
+**How it works**: Simply add a commit hook to your open source / open science repository. 
+
+```sh
+wget https://raw.githubusercontent.com/ASSERT-KTH/reproducible-trajectories/refs/heads/main/hooks/pre-commit-collect-trajectories.py > .git/hooks/pre-commit
+chmod 755 .git/hooks/pre-commit
+``` 
+
+When you commit, the trajectory is automatically captured and contributed to our shared database.
+
+In case you accidentally pushed a trajectory for a private repo or one containing private data, shoot us [an email](mailto:monperrus@kth.se?subject=reproducible-trajectories).
+
+In any case, we'll do serious privacy checks before publishing the dataset.
 
 ---
 
@@ -85,7 +106,9 @@ python reproducible_trajectories.py filter-trajectories trace.jsonl /home/user/p
 
 ### verify-trajectories
 
-Walk a Git repository, find commits that reference a trajectory, replay the trajectory's `Write`/`Edit` operations on the parent-commit file state, and check whether the result matches the actual commit.
+The core idea: a git commit produced by an AI agent should be as reproducible as one produced by a deterministic build system. Tag your commit with a trajectory ID, store the trajectory alongside the code, and anyone — human or machine — can replay the session step by step and check that the output matches.
+
+`verify-trajectories` walks a Git repository, finds commits that reference a trajectory, replays the trajectory's `Write`/`Edit` operations on the parent-commit file state, and checks whether the result matches the actual commit.
 
 ```
 usage: reproducible_trajectories.py verify-trajectories [-h]
@@ -252,3 +275,8 @@ Payload format:
 `f4f82a30-f6f4-452a-9f73-14a48a4d38f5`: add-trajectories-to-repo
 
 `ca9f8f57-90ab-4eda-b6a9-b9fc9676b789`: add support for "no trajectory" in commit hoook
+
+## License
+
+MIT
+Authors: Martin Monperrus and the Assert team
