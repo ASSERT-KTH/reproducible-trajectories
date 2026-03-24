@@ -31,20 +31,31 @@ In any case, we'll do serious privacy checks before publishing the dataset.
 
 ---
 
-## Script
+## Installation
+
+```sh
+pip install reproducible-trajectories
+```
+
+## CLI
 
 ```
-$ python reproducible_trajectories.py <command>
-
+$ python -m reproducible_trajectories <command>
 ```
 
-Commands could be
+Or, after `pip install`:
 
-### extract-read-files
+```
+$ reproducible-trajectories <command>
+```
 
-Extract all files read in a Claude Code trajectory, either by a tool call `Read` (or equivalent), or with a bash command (cat / head / tail / sed / awk). Telles whether the file has been fully or partially read. Support textual and json output.
+Commands:
 
-### extract-modified-files
+### read-files
+
+Extract all files read in a Claude Code trajectory, either by a tool call `Read` (or equivalent), or with a bash command (cat / head / tail / sed / awk). Tells whether the file has been fully or partially read. Supports textual and JSON output.
+
+### modified-files
 
 Extract all modified files from a Claude Code trajectory. For each file, reports one of:
 
@@ -54,7 +65,7 @@ Extract all modified files from a Claude Code trajectory. For each file, reports
 - `new file` — file was created fresh during the trajectory (no pre-existing content)
 
 ```
-usage: extract-modified-files.py [-h] [--claude-dir CLAUDE_DIR] [--json] trajectory
+usage: python -m reproducible_trajectories modified-files [-h] [--claude-dir CLAUDE_DIR] [--json] trajectory
 
 positional arguments:
   trajectory       path to trajectory JSONL file, or session ID
@@ -74,11 +85,11 @@ Session IDs are resolved by searching `~/.claude/projects/**/<id>.jsonl`.
 Produce a filtered copy of a trajectory, removing tool calls (`Read`, `Write`, `Edit`, `NotebookEdit`, `Glob`, `Grep`) that reference specified files or folders, along with their paired results. Events that become empty after filtering are dropped entirely, keeping the output a valid Claude trace.
 
 ```
-usage: reproducible_trajectories.py filter-trajectories [-h]
-                                                        [--claude-dir CLAUDE_DIR]
-                                                        [--cwd CWD]
-                                                        [--output OUTPUT]
-                                                        trajectory [paths ...]
+usage: python -m reproducible_trajectories filter-trajectories [-h]
+                                                     [--claude-dir CLAUDE_DIR]
+                                                     [--cwd CWD]
+                                                     [--output OUTPUT]
+                                                     trajectory [paths ...]
 
 positional arguments:
   trajectory       path to trajectory JSONL file, or session ID
@@ -96,12 +107,12 @@ The input file is never modified. Output is written as JSONL (one JSON object pe
 
 **Example — strip all references to files outside the project:**
 ```
-python reproducible_trajectories.py filter-trajectories <session-id> -o filtered.jsonl
+python -m reproducible_trajectories filter-trajectories <session-id> -o filtered.jsonl
 ```
 
 **Example — strip references to a specific private directory:**
 ```
-python reproducible_trajectories.py filter-trajectories trace.jsonl /home/user/private -o trace-public.jsonl
+python -m reproducible_trajectories filter-trajectories trace.jsonl /home/user/private -o trace-public.jsonl
 ```
 
 ### verify-trajectories
@@ -111,10 +122,10 @@ The core idea: a git commit produced by an AI agent should be as reproducible as
 `verify-trajectories` walks a Git repository, finds commits that reference a trajectory, replays the trajectory's `Write`/`Edit` operations on the parent-commit file state, and checks whether the result matches the actual commit.
 
 ```
-usage: reproducible_trajectories.py verify-trajectories [-h]
-                                                        [--claude-dir CLAUDE_DIR]
-                                                        [--json]
-                                                        repo
+usage: python -m reproducible_trajectories verify-trajectories [-h]
+                                                     [--claude-dir CLAUDE_DIR]
+                                                     [--json]
+                                                     repo
 
 positional arguments:
   repo             path to the git repository to verify
@@ -138,7 +149,7 @@ Files that cannot be verified are excluded from the pass/fail judgement:
 
 **Example — text output:**
 ```
-$ python reproducible_trajectories.py verify-trajectories .
+$ python -m reproducible_trajectories verify-trajectories .
 0d43870c17a0  reproducible            implementation of hook
 859aba2ca3ca  reproducible            implementation of extract_read_files
 b9f4ef111d9f  not_reproducible        first implementation of extract-modified-files.py
@@ -146,7 +157,7 @@ b9f4ef111d9f  not_reproducible        first implementation of extract-modified-f
 
 **Example — JSON output with per-file breakdown:**
 ```
-$ python reproducible_trajectories.py verify-trajectories . --json
+$ python -m reproducible_trajectories verify-trajectories . --json
 [
   {
     "commit": "0d43870c17a0",
@@ -166,11 +177,11 @@ $ python reproducible_trajectories.py verify-trajectories . --json
 For each trajectory referred to in commits, copy it into the repo under `trajectories/`, provided it only reads files from within the repo (no private paths outside the repository root).
 
 ```
-usage: reproducible_trajectories.py add-trajectories-to-repo [-h]
-                                                              [--claude-dir CLAUDE_DIR]
-                                                              [--json]
-                                                              [--dry-run]
-                                                              repo
+usage: python -m reproducible_trajectories add-trajectories-to-repo [-h]
+                                                          [--claude-dir CLAUDE_DIR]
+                                                          [--json]
+                                                          [--dry-run]
+                                                          repo
 
 positional arguments:
   repo             path to the git repository
@@ -190,12 +201,12 @@ Each referenced trajectory is reported with one of four statuses:
 
 **Example — copy all safe trajectories:**
 ```
-python reproducible_trajectories.py add-trajectories-to-repo .
+python -m reproducible_trajectories add-trajectories-to-repo .
 ```
 
 **Example — preview without writing:**
 ```
-python reproducible_trajectories.py add-trajectories-to-repo . --dry-run
+python -m reproducible_trajectories add-trajectories-to-repo . --dry-run
 ```
 
 ## Commit conventions
@@ -260,7 +271,7 @@ Payload format:
   - contains private files, so we only push the filtered version to the repository
 
 
-`fb049bdf-8889-449f-a299-c11d48fe430b`: refactoring to `$ python reproducible_trajectories.py <command>`
+`fb049bdf-8889-449f-a299-c11d48fe430b`: refactoring to `$ python -m reproducible_trajectories <command>`
 
 `e9f50aed-ffcd-488b-bdd3-8e6f68539932`: implement the hook system
 

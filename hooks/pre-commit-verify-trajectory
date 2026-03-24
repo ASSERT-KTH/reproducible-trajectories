@@ -25,10 +25,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-_HOOKS_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(_HOOKS_DIR.parent / "src"))
-
-from trajectory import build_sequence, get_session_info, _simulate_ops, _rel
+try:
+    from reproducible_trajectories.trajectory import build_sequence, get_session_info, _simulate_ops, _rel
+except ImportError:
+    _HOOKS_DIR = Path(__file__).resolve().parent
+    sys.path.insert(0, str(_HOOKS_DIR.parent))
+    from reproducible_trajectories.trajectory import build_sequence, get_session_info, _simulate_ops, _rel
 
 
 # ---------------------------------------------------------------------------

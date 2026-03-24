@@ -14,17 +14,26 @@ import sys
 import urllib.request
 from pathlib import Path
 
-_HOOKS_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(_HOOKS_DIR.parent / "src"))
-
-from trajectory import (
-    build_sequence,
-    collect_modifications,
-    get_session_info,
-    parse_trajectory,
-    _rel,
-    _simulate_ops,
-)
+try:
+    from reproducible_trajectories.trajectory import (
+        build_sequence,
+        collect_modifications,
+        get_session_info,
+        parse_trajectory,
+        _rel,
+        _simulate_ops,
+    )
+except ImportError:
+    _HOOKS_DIR = Path(__file__).resolve().parent
+    sys.path.insert(0, str(_HOOKS_DIR.parent))
+    from reproducible_trajectories.trajectory import (
+        build_sequence,
+        collect_modifications,
+        get_session_info,
+        parse_trajectory,
+        _rel,
+        _simulate_ops,
+    )
 
 API_URL = "https://api.monperrus.com/trajectories"
 CLAUDE_DIR = Path.home() / ".claude"

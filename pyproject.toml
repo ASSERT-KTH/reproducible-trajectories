@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reproducible-trajectories"
+version = "0.1.0"
+description = "Tooling for capturing, analyzing, and verifying AI coding agent trajectories"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Martin Monperrus" },
+]
+requires-python = ">=3.8"
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/ASSERT-KTH/reproducible-trajectories"
+Repository = "https://github.com/ASSERT-KTH/reproducible-trajectories"
+
+[project.scripts]
+reproducible-trajectories = "reproducible_trajectories.trajectory:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["reproducible_trajectories*"]
