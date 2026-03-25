@@ -421,6 +421,74 @@ def filter_trajectory(trajectory_path, exclude_paths=None, cwd=None):
 
 
 # ---------------------------------------------------------------------------
+# pre-commit-verify-trajectory hook
+# ---------------------------------------------------------------------------
+
+_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I
+)
+_TRAJECTORY_LABEL_RE = re.compile(r"trajectory\s*:\s*(\S+)", re.I | re.MULTILINE)
+_TRAJECTORY_TAG_RE = re.compile(r"<trajectory>([^<]+)</trajectory>", re.I)
+
+
+def _uuid_exists(uuid, claude_dir):
+    return bool(list(Path(claude_dir).glob(f"projects/**/{uuid}.jsonl")))
+
+
+def _validate_identifier(identifier, claude_dir):
+    if _UUID_RE.fullmatch(identifier):
+        return _uuid_exists(identifier, claude_dir)
+    return Path(identifier).exists()
+
+
+def check_commit_message(msg, claude_dir):
+    if re.search(r"\bno trajectory\b", msg, re.I):
+        return True, None
+
+    candidates = []
+    for m in _TRAJECTORY_LABEL_RE.finditer(msg):
+        candidates.append(m.group(1))
+    for m in _TRAJECTORY_TAG_RE.finditer(msg):
+        value = m.group(1).strip()
+        if _UUID_RE.fullmatch(value):
+            candidates.append(value)
+
+    if not candidates:
+        return False, "no trajectory identifier found in commit message"
+
+    for c in candidates:
+        if _validate_identifier(c, claude_dir):
+            return True, None
+
+    return False, f"none of the trajectory identifiers could be validated: {candidates}"
+
+
+def pre_commit_verify_trajectory(argv=None):
+    """Entry point for the commit-msg git hook."""
+    import sys as _sys
+    args = (argv if argv is not None else _sys.argv)[1:]
+    if not args:
+        print("usage: pre-commit <commit-msg-file>", file=_sys.stderr)
+        _sys.exit(1)
+
+    with open(args[0]) as f:
+        raw = f.read()
+
+    msg = "\n".join(l for l in raw.splitlines() if not l.startswith("#"))
+    claude_dir = Path.home() / ".claude"
+    ok, error = check_commit_message(msg, claude_dir)
+
+    if not ok:
+        print(f"commit rejected: {error}", file=_sys.stderr)
+        print("commit message must include a trajectory identifier, e.g.:", file=_sys.stderr)
+        print("  trajectory: <uuid>", file=_sys.stderr)
+        print("  trajectory: <path/to/trajectory.jsonl>", file=_sys.stderr)
+        print("  <trajectory><uuid></trajectory>", file=_sys.stderr)
+        print("or include 'no trajectory' to skip this check", file=_sys.stderr)
+        _sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # verify-trajectories
 # ---------------------------------------------------------------------------
 
