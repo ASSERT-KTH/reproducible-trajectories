@@ -1,5 +1,7 @@
 # the reproducible-trajectories project
 
+[![PyPI](https://img.shields.io/pypi/v/reproducible-trajectories)](https://pypi.org/project/reproducible-trajectories/)
+
 When a coding agent edits your codebase, it produces a *trajectory*: a complete, structured log of every file it read, every edit it made, and every tool it called. 
 
 Trajectories represent **critical data for understanding and improving how AI coding agents work**. Yet this data is almost never captured or shared. With trajectory data, we could conduct unprecedented research:
@@ -32,6 +34,8 @@ In any case, we'll do serious privacy checks before publishing the dataset.
 ---
 
 ## Installation
+
+The package is available on [PyPI](https://pypi.org/project/reproducible-trajectories/):
 
 ```sh
 pip install reproducible-trajectories
