@@ -18,6 +18,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+import pi_trajectory
+
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -30,6 +32,8 @@ def parse_trajectory(path):
             line = line.strip()
             if line:
                 events.append(json.loads(line))
+    if pi_trajectory.is_pi_trajectory(events):
+        events = pi_trajectory.normalize_trajectory(events)
     return events
 
 
@@ -67,6 +71,9 @@ def resolve_trajectory_path(trajectory_arg, claude_dir):
     matches = list(Path(claude_dir).glob(f"projects/**/{trajectory_arg}.jsonl"))
     if matches:
         return str(matches[0])
+    pi_match = pi_trajectory.resolve_session_path(trajectory_arg)
+    if pi_match:
+        return pi_match
     return trajectory_arg
 
 
