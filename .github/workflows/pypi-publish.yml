@@ -16,7 +16,7 @@ jobs:
     steps:
     - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
     - name: Version bump
-      uses: monperrus/pyproject-bump-pypi@40841aad1802af7e6676a3856b4685ab017bc66b # main
+      uses: monperrus/pyproject-bump-pypi@f8c326aed42b4bf8eb0cd1d9e55e2f627e186406 # main
       with:
         file_to_bump: "./pyproject.toml"
         bump_type: "minor"
