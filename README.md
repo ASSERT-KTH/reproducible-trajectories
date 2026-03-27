@@ -176,6 +176,45 @@ $ python -m reproducible_trajectories verify-trajectories . --json
 ]
 ```
 
+### open-source-trajectories
+
+`open-source-trajectories` is the easiest way to contribute your local Claude Code trajectories to science. It scans `~/.claude/projects/`, identifies trajectories whose edits are confined to a single public GitHub repository, and offers to upload them to the KTH research dataset.
+
+**Why it matters for science**: Trajectories produced on open-source projects are themselves open data — the code they touch is public, the repository is public, and the agent's reasoning process is therefore safe to share. Collecting these trajectories at scale enables empirical studies that are otherwise impossible: How do AI agents navigate real codebases? Which tool-use patterns lead to correct, mergeable commits? How does agent behaviour vary across programming languages or project sizes? Every trajectory you share is a data point that helps answer these questions.
+
+**How to run it** (interactive, one-time contribution):
+
+```sh
+pip install reproducible-trajectories
+python -m reproducible_trajectories open-source-trajectories
+```
+
+The command will:
+1. Scan all local trajectories and filter those that only edit files inside a single public GitHub repository.
+2. Display the list of repos and edited files found.
+3. Ask whether you agree to share all of them, or step through them repo by repo.
+4. Zip and upload the approved trajectories together with a `metadata.json` containing your git email and the GitHub repo URLs.
+5. Ask whether to install a `pre-commit` hook in each repo so future trajectories are shared automatically.
+6. Print a summary: trajectories uploaded, hooks added.
+
+```
+$ python -m reproducible_trajectories open-source-trajectories
+🔍 Found 20 trajectories in open-source repos
+
+/home/user/myproject  https://github.com/org/myproject
+  /home/user/myproject/src/foo.py
+  /home/user/myproject/tests/test_foo.py
+...
+
+Do you agree to share them all with the KTH experiment on coding agents? [y/N]
+```
+
+**Non-interactive mode** (for use in scripts or hooks):
+
+```sh
+python -m reproducible_trajectories open-source-trajectories --yes
+```
+
 ### add-trajectories-to-repo
 
 For each trajectory referred to in commits, copy it into the repo under `trajectories/`, provided it only reads files from within the repo (no private paths outside the repository root).

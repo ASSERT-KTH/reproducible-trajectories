@@ -817,6 +817,174 @@ def add_trajectories_to_repo(repo_path, claude_dir=None, dry_run=False):
 
 
 # ---------------------------------------------------------------------------
+# open-source-trajectories
+# ---------------------------------------------------------------------------
+
+def _find_git_root(file_path):
+    """Return the git repo root for the given file path, or None."""
+    d = Path(file_path).parent
+    # Walk up to find an existing ancestor directory
+    while d != d.parent:
+        if d.exists():
+            break
+        d = d.parent
+    else:
+        return None
+    rc, out = _git(['rev-parse', '--show-toplevel'], str(d))
+    if rc != 0:
+        return None
+    return out.strip()
+
+
+def _get_github_remote_urls(repo_path):
+    """Return set of GitHub remote URLs for the given git repo."""
+    rc, out = _git(['remote', '-v'], repo_path)
+    if rc != 0:
+        return set()
+    urls = set()
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and 'github.com' in parts[1]:
+            urls.add(parts[1])
+    return urls
+
+
+def _parse_github_owner_repo(url):
+    """Parse a GitHub remote URL and return 'owner/repo', or None."""
+    m = re.match(
+        r'(?:https?://github\.com/|git@github\.com:)([^/]+/[^/\s]+?)(?:\.git)?$',
+        url,
+    )
+    return m.group(1) if m else None
+
+
+def _is_public_github_repo(owner_repo):
+    """Return True if the GitHub repo is publicly accessible (no API rate limit)."""
+    import urllib.request
+    import urllib.error
+    url = f'https://github.com/{owner_repo}'
+    req = urllib.request.Request(
+        url, method='HEAD', headers={'User-Agent': 'reproducible-trajectories'}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status == 200
+    except urllib.error.HTTPError as e:
+        return False
+    except Exception:
+        return False
+
+
+def open_source_trajectories(claude_dir=None):
+    """
+    Scan all trajectories in ~/.claude/projects/ and return those where:
+      1. Every edit is within a single git repository.
+      2. That git repository has at least one public GitHub remote.
+
+    Returns list of dicts, one per unique (local_folder, github_repo) pair:
+      {local_folder, github_repo, trajectories: [...], edited_files: [...]}
+    """
+    if claude_dir is None:
+        claude_dir = Path.home() / '.claude'
+    claude_dir = Path(claude_dir)
+
+    # key: (local_folder, github_repo) -> {trajectories: set, edited_files: set}
+    groups = {}
+    _public_cache = {}
+
+    for traj_path in sorted(claude_dir.glob('projects/**/*.jsonl')):
+        try:
+            events = parse_trajectory(str(traj_path))
+        except (json.JSONDecodeError, OSError):
+            continue
+        sequence, _tool_uses = build_sequence(events)
+        modifications = collect_modifications(sequence)
+
+        if not modifications:
+            continue
+
+        # Require all edits to fall under a single git repo root
+        git_roots = set()
+        all_in_git = True
+        for file_path in modifications:
+            root = _find_git_root(file_path)
+            if root is None:
+                all_in_git = False
+                break
+            git_roots.add(root)
+
+        if not all_in_git or len(git_roots) != 1:
+            continue
+
+        repo_root = next(iter(git_roots))
+
+        # Find a public GitHub remote for this repo
+        github_urls = _get_github_remote_urls(repo_root)
+        public_repo_url = None
+        for url in sorted(github_urls):
+            owner_repo = _parse_github_owner_repo(url)
+            if owner_repo is None:
+                continue
+            if owner_repo not in _public_cache:
+                _public_cache[owner_repo] = _is_public_github_repo(owner_repo)
+            if _public_cache[owner_repo]:
+                public_repo_url = f'https://github.com/{owner_repo}'
+                break
+
+        if public_repo_url is None:
+            continue
+
+        key = (repo_root, public_repo_url)
+        if key not in groups:
+            groups[key] = {'trajectories': [], 'edited_files': set()}
+        groups[key]['trajectories'].append(str(traj_path))
+        groups[key]['edited_files'].update(modifications.keys())
+
+    return [
+        {
+            'local_folder': local_folder,
+            'github_repo': github_repo,
+            'trajectories': sorted(info['trajectories']),
+            'edited_files': sorted(info['edited_files']),
+        }
+        for (local_folder, github_repo), info in sorted(groups.items())
+    ]
+
+
+# ---------------------------------------------------------------------------
+# collection webhook
+# ---------------------------------------------------------------------------
+
+_COLLECTION_HOOK_MARKER = '# reproducible-trajectories collection hook'
+
+
+def _install_collection_webhook(repo_paths):
+    """Add/update a pre-commit git hook in each repo that shares trajectories."""
+    hook_body = 'pre-commit-collect-trajectories\n'
+    installed = 0
+    for repo_path in repo_paths:
+        hook_path = Path(repo_path) / '.git' / 'hooks' / 'pre-commit'
+        marker_line = _COLLECTION_HOOK_MARKER + '\n'
+        hook_snippet = marker_line + hook_body
+
+        if hook_path.exists():
+            existing = hook_path.read_text()
+            if _COLLECTION_HOOK_MARKER in existing:
+                print(f"  already installed: {hook_path}")
+                continue
+            # Append to existing hook
+            new_content = existing.rstrip('\n') + '\n\n' + hook_snippet
+        else:
+            new_content = '#!/bin/sh\n\n' + hook_snippet
+
+        hook_path.write_text(new_content)
+        hook_path.chmod(0o755)
+        print(f"  ✅ installed: {hook_path}")
+        installed += 1
+    return installed
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -878,6 +1046,18 @@ def main(argv=None):
         help="Report what would be copied without writing anything",
     )
 
+    p_oss = subparsers.add_parser(
+        "open-source-trajectories",
+        help="List trajectories whose edits are all within a public GitHub repo",
+    )
+    p_oss.add_argument(
+        "--claude-dir",
+        default=None,
+        help="Path to .claude directory (default: ~/.claude)",
+    )
+    p_oss.add_argument("--json", action="store_true", help="Output results as JSON")
+    p_oss.add_argument("--yes", action="store_true", help="Auto-confirm sharing all repos (non-interactive)")
+
     p_filter = subparsers.add_parser(
         "filter-trajectories",
         help="Remove tool calls related to specified files/folders",
@@ -906,6 +1086,86 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
     claude_dir = Path(args.claude_dir or Path.home() / ".claude")
+
+    if args.command == "open-source-trajectories":
+        results = open_source_trajectories(claude_dir=str(claude_dir))
+        if args.json:
+            print(json.dumps(results, indent=2))
+            return
+        n = sum(len(r['trajectories']) for r in results)
+        print(f"🔍 Found {n} trajectories in open-source repos")
+        if not results:
+            return
+        print()
+        for r in results:
+            print(f"{r['local_folder']}  {r['github_repo']}")
+            for f in r['edited_files']:
+                print(f"  {f}")
+        print()
+        import tempfile, zipfile, urllib.request
+        _rc, git_email = _git(['config', '--global', 'user.email'], os.getcwd())
+        git_email = git_email.strip()
+
+        if args.yes:
+            answer = 'y'
+        else:
+            answer = input("Do you agree to share them all with the KTH experiment on coding agents? [y/N] ").strip().lower()
+        if answer == 'y':
+            approved = results
+        else:
+            approved = []
+            for r in results:
+                a = input(f"  Share {r['github_repo']} ({len(r['trajectories'])} trajectories)? [y/N] ").strip().lower()
+                if a == 'y':
+                    approved.append(r)
+
+        if not approved:
+            print("Sharing cancelled.")
+            return
+
+        all_trajs = [t for r in approved for t in r['trajectories']]
+        github_urls = sorted({r['github_repo'] for r in approved})
+        metadata = {
+            'git_email': git_email,
+            'github_repos': github_urls,
+            'trajectories': all_trajs,
+        }
+        with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp:
+            zip_path = tmp.name
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr('metadata.json', json.dumps(metadata, indent=2))
+            for r in approved:
+                repo_slug = r['github_repo'].replace('https://github.com/', '').replace('/', '_')
+                for t in r['trajectories']:
+                    zf.write(t, f"{repo_slug}/{Path(t).name}")
+        print(f"Uploading {len(all_trajs)} trajectories ...")
+        zip_data = Path(zip_path).read_bytes()
+        req = urllib.request.Request(
+            'https://www.monperrus.net/martin/transfer-sh.py/trajectories',
+            data=zip_data,
+            method='PUT',
+            headers={
+                'User-Agent': 'reproducible-trajectories',
+                'Content-Length': str(len(zip_data)),
+            },
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            url = resp.read().decode().strip()
+        print(f"Shared: {url}")
+        print()
+        print("🙏 Thank you so much for contributing to the KTH experiment on coding agents!")
+        print("   Your trajectories will help advance research on AI-assisted software engineering.")
+        print()
+        hooks_added = 0
+        hook_answer = input("Do you agree to install a collection webhook in each repo to automatically share future trajectories? [y/N] ").strip().lower()
+        if hook_answer == 'y':
+            hooks_added = _install_collection_webhook([r['local_folder'] for r in approved])
+        print()
+        print("── Summary ──────────────────────────────")
+        print(f"  Trajectories uploaded : {len(all_trajs)}")
+        print(f"  Hooks added           : {hooks_added}")
+        print("─────────────────────────────────────────")
+        return
 
     if args.command == "verify-trajectories":
         results = verify_trajectories(args.repo, claude_dir=str(claude_dir))
