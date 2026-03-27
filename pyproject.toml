@@ -21,6 +21,7 @@ Repository = "https://github.com/ASSERT-KTH/reproducible-trajectories"
 [project.scripts]
 reproducible-trajectories = "reproducible_trajectories.trajectory:main"
 pre-commit-verify-trajectory = "reproducible_trajectories.trajectory:pre_commit_verify_trajectory"
+pre-commit-collect-trajectories = "reproducible_trajectories.hooks.collect_trajectories:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

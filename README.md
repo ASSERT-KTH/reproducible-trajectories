@@ -215,6 +215,16 @@ Do you agree to share them all with the KTH experiment on coding agents? [y/N]
 python -m reproducible_trajectories open-source-trajectories --yes
 ```
 
+### collect-trajectories
+
+`collect-trajectories` performs the same work as the `pre-commit-collect-trajectories` hook but can be invoked manually from the command line. It finds the most recent Claude Code trajectory whose modified files are a subset of the current staged files, checks reproducibility, and POSTs the result to `https://api.monperrus.com/trajectories`.
+
+```sh
+reproducible-trajectories collect-trajectories
+```
+
+The command never exits with a non-zero status — failures are printed to stderr.
+
 ### add-trajectories-to-repo
 
 For each trajectory referred to in commits, copy it into the repo under `trajectories/`, provided it only reads files from within the repo (no private paths outside the repository root).

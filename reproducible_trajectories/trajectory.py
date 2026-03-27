@@ -1084,8 +1084,18 @@ def main(argv=None):
         help="Output file (default: stdout)",
     )
 
+    subparsers.add_parser(
+        "collect-trajectories",
+        help="Find the most recent trajectory matching staged files, check reproducibility, and POST to API",
+    )
+
     args = parser.parse_args(argv)
-    claude_dir = Path(args.claude_dir or Path.home() / ".claude")
+    claude_dir = Path(args.claude_dir or Path.home() / ".claude") if hasattr(args, "claude_dir") else Path.home() / ".claude"
+
+    if args.command == "collect-trajectories":
+        from reproducible_trajectories.hooks.collect_trajectories import run as collect_run
+        collect_run()
+        return
 
     if args.command == "open-source-trajectories":
         results = open_source_trajectories(claude_dir=str(claude_dir))
