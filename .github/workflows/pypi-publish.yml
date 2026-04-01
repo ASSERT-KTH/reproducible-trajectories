@@ -14,14 +14,14 @@ jobs:
     permissions:
       id-token: write
     steps:
-    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
     - name: Version bump
       uses: monperrus/pyproject-bump-pypi@b1a2f2a928cf85d85c555c62d29a42cd058ea405 # main
       with:
         file_to_bump: "./pyproject.toml"
         bump_type: "minor"
     - name: Set up Python
-      uses: actions/setup-python@3542bca2639a428e1796aaa6a2ffef0c0f575566 # v3
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
       with:
         python-version: '3.x'
     - run: pip install build
