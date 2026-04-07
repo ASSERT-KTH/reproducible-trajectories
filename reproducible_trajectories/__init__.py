@@ -7,6 +7,7 @@ from reproducible_trajectories.trajectory import (
     filter_trajectory,
     verify_trajectories,
     add_trajectories_to_repo,
+    open_source_trajectories,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "filter_trajectory",
     "verify_trajectories",
     "add_trajectories_to_repo",
+    "open_source_trajectories",
 ]
