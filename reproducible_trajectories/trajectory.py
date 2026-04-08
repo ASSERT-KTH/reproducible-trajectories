@@ -875,9 +875,94 @@ def _is_public_github_repo(owner_repo):
         return False
 
 
-def open_source_trajectories(claude_dir=None):
+def _get_codex_session_info(events):
     """
-    Scan all trajectories in ~/.claude/projects/ and return those where:
+    Extract (session_id, cwd) from OpenAI Codex CLI session events.
+
+    Codex sessions include a metadata object with a 'cwd' field, typically
+    the first event in the JSONL file. Only events that look like session
+    metadata (i.e. contain 'cwd' but no 'role' field used by chat messages)
+    are considered.
+    """
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        # Chat messages (user/assistant/tool) carry a 'role' field — skip them.
+        # Session metadata events have 'cwd' but no 'role'.
+        if e.get('role'):
+            continue
+        if e.get('cwd'):
+            return e.get('id') or e.get('session_id'), e['cwd']
+    return None, None
+
+
+def _collect_codex_modifications(events, session_cwd=None):
+    """
+    Extract first file modification per path from OpenAI Codex CLI session events.
+
+    Handles two tool call styles:
+      - write_file: {"path": "...", "content": "..."}
+      - apply_patch: {"patch": "..."} or {"input": "..."}
+        Supports both the OpenAI custom patch format
+        ("*** Update File: path" / "*** Add File: path") and
+        standard unified diff format ("+++ b/path" / "+++ path").
+
+    Returns dict: {absolute_file_path: {tool, input}}
+    """
+    seen = {}
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        tool_calls = e.get('tool_calls') or []
+        for tc in tool_calls:
+            if not isinstance(tc, dict):
+                continue
+            func = tc.get('function', {})
+            name = func.get('name', '')
+            try:
+                args = json.loads(func.get('arguments', '{}'))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                args = {}
+
+            if name == 'write_file':
+                path = args.get('path', '')
+                if path:
+                    if not os.path.isabs(path) and session_cwd:
+                        path = str(Path(session_cwd) / path)
+                    if path not in seen:
+                        seen[path] = {'tool': 'write_file', 'input': args}
+
+            elif name == 'apply_patch':
+                patch = args.get('patch') or args.get('input', '')
+                if not isinstance(patch, str):
+                    continue
+                for line in patch.splitlines():
+                    # OpenAI custom patch format
+                    for prefix in ('*** Update File: ', '*** Add File: '):
+                        if line.startswith(prefix):
+                            path = line[len(prefix):].strip()
+                            if path:
+                                if not os.path.isabs(path) and session_cwd:
+                                    path = str(Path(session_cwd) / path)
+                                if path not in seen:
+                                    seen[path] = {'tool': 'apply_patch', 'input': args}
+                    # Standard unified diff format: "+++ b/path" or "+++ path"
+                    if line.startswith('+++ '):
+                        path = line[4:].strip()
+                        if path.startswith('b/'):
+                            path = path[2:]
+                        if path and path != '/dev/null':
+                            if not os.path.isabs(path) and session_cwd:
+                                path = str(Path(session_cwd) / path)
+                            if path not in seen:
+                                seen[path] = {'tool': 'apply_patch', 'input': args}
+    return seen
+
+
+def open_source_trajectories(claude_dir=None, codex_dir=None):
+    """
+    Scan all trajectories in ~/.claude/projects/ and ~/.codex/sessions/ and
+    return those where:
       1. Every edit is within a single git repository.
       2. That git repository has at least one public GitHub remote.
 
@@ -888,20 +973,18 @@ def open_source_trajectories(claude_dir=None):
         claude_dir = Path.home() / '.claude'
     claude_dir = Path(claude_dir)
 
+    if codex_dir is None:
+        codex_dir = Path.home() / '.codex'
+    codex_dir = Path(codex_dir)
+
     # key: (local_folder, github_repo) -> {trajectories: set, edited_files: set}
     groups = {}
     _public_cache = {}
 
-    for traj_path in sorted(claude_dir.glob('projects/**/*.jsonl')):
-        try:
-            events = parse_trajectory(str(traj_path))
-        except (json.JSONDecodeError, OSError):
-            continue
-        sequence, _tool_uses = build_sequence(events)
-        modifications = collect_modifications(sequence)
-
+    def _process_modifications(traj_path, modifications):
+        """Shared logic: group trajectory by public-GitHub repo."""
         if not modifications:
-            continue
+            return
 
         # Require all edits to fall under a single git repo root
         git_roots = set()
@@ -914,7 +997,7 @@ def open_source_trajectories(claude_dir=None):
             git_roots.add(root)
 
         if not all_in_git or len(git_roots) != 1:
-            continue
+            return
 
         repo_root = next(iter(git_roots))
 
@@ -932,13 +1015,38 @@ def open_source_trajectories(claude_dir=None):
                 break
 
         if public_repo_url is None:
-            continue
+            return
 
         key = (repo_root, public_repo_url)
         if key not in groups:
             groups[key] = {'trajectories': [], 'edited_files': set()}
         groups[key]['trajectories'].append(str(traj_path))
         groups[key]['edited_files'].update(modifications.keys())
+
+    # --- Claude Code trajectories ---
+    for traj_path in sorted(claude_dir.glob('projects/**/*.jsonl')):
+        try:
+            events = parse_trajectory(str(traj_path))
+        except (json.JSONDecodeError, OSError):
+            continue
+        sequence, _tool_uses = build_sequence(events)
+        modifications = collect_modifications(sequence)
+        _process_modifications(traj_path, modifications)
+
+    # --- Codex CLI trajectories ---
+    for traj_path in sorted(codex_dir.glob('sessions/**/*.jsonl')):
+        try:
+            events = []
+            with open(traj_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        events.append(json.loads(line))
+        except (json.JSONDecodeError, OSError):
+            continue
+        _, session_cwd = _get_codex_session_info(events)
+        modifications = _collect_codex_modifications(events, session_cwd)
+        _process_modifications(traj_path, modifications)
 
     return [
         {
@@ -1057,6 +1165,11 @@ def main(argv=None):
     )
     p_oss.add_argument("--json", action="store_true", help="Output results as JSON")
     p_oss.add_argument("--yes", action="store_true", help="Auto-confirm sharing all repos (non-interactive)")
+    p_oss.add_argument(
+        "--codex-dir",
+        default=None,
+        help="Path to Codex CLI sessions directory (default: ~/.codex)",
+    )
 
     p_filter = subparsers.add_parser(
         "filter-trajectories",
@@ -1098,7 +1211,8 @@ def main(argv=None):
         return
 
     if args.command == "open-source-trajectories":
-        results = open_source_trajectories(claude_dir=str(claude_dir))
+        codex_dir = args.codex_dir if hasattr(args, 'codex_dir') else None
+        results = open_source_trajectories(claude_dir=str(claude_dir), codex_dir=codex_dir)
         if args.json:
             print(json.dumps(results, indent=2))
             return
