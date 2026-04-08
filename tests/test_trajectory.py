@@ -1017,3 +1017,158 @@ class TestAddTrajectoriesToRepo:
         assert any(r["status"] == "added" for r in results)
         dest = repo / "trajectories" / f"{traj_uuid}.jsonl"
         assert not dest.exists()
+
+
+# ---------------------------------------------------------------------------
+# _get_codex_session_info
+# ---------------------------------------------------------------------------
+
+class TestGetCodexSessionInfo:
+    def test_returns_id_and_cwd(self):
+        from reproducible_trajectories.trajectory import _get_codex_session_info
+        events = [
+            {"id": "sess-abc", "cwd": "/home/user/project"},
+        ]
+        session_id, cwd = _get_codex_session_info(events)
+        assert session_id == "sess-abc"
+        assert cwd == "/home/user/project"
+
+    def test_session_id_field_fallback(self):
+        from reproducible_trajectories.trajectory import _get_codex_session_info
+        events = [
+            {"session_id": "sess-xyz", "cwd": "/repo"},
+        ]
+        session_id, cwd = _get_codex_session_info(events)
+        assert session_id == "sess-xyz"
+        assert cwd == "/repo"
+
+    def test_skips_chat_messages_with_role(self):
+        from reproducible_trajectories.trajectory import _get_codex_session_info
+        events = [
+            {"role": "user", "content": "hello", "cwd": "/wrong"},
+            {"role": "assistant", "cwd": "/also-wrong"},
+            {"id": "sess-1", "cwd": "/correct"},
+        ]
+        session_id, cwd = _get_codex_session_info(events)
+        assert cwd == "/correct"
+
+    def test_returns_none_when_no_cwd(self):
+        from reproducible_trajectories.trajectory import _get_codex_session_info
+        events = [
+            {"role": "user", "content": "hello"},
+        ]
+        session_id, cwd = _get_codex_session_info(events)
+        assert session_id is None
+        assert cwd is None
+
+    def test_empty_events(self):
+        from reproducible_trajectories.trajectory import _get_codex_session_info
+        session_id, cwd = _get_codex_session_info([])
+        assert session_id is None
+        assert cwd is None
+
+
+# ---------------------------------------------------------------------------
+# _collect_codex_modifications
+# ---------------------------------------------------------------------------
+
+def _make_codex_tool_call(name, args):
+    return {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": json.dumps(args),
+                },
+            }
+        ],
+    }
+
+
+class TestCollectCodexModifications:
+    def test_write_file_absolute_path(self):
+        from reproducible_trajectories.trajectory import _collect_codex_modifications
+        events = [_make_codex_tool_call("write_file", {"path": "/repo/src/main.py", "content": "x"})]
+        mods = _collect_codex_modifications(events)
+        assert "/repo/src/main.py" in mods
+        assert mods["/repo/src/main.py"]["tool"] == "write_file"
+
+    def test_write_file_relative_path_with_cwd(self):
+        from reproducible_trajectories.trajectory import _collect_codex_modifications
+        events = [_make_codex_tool_call("write_file", {"path": "src/main.py", "content": "x"})]
+        mods = _collect_codex_modifications(events, session_cwd="/repo")
+        assert "/repo/src/main.py" in mods
+
+    def test_write_file_relative_path_no_cwd(self):
+        from reproducible_trajectories.trajectory import _collect_codex_modifications
+        events = [_make_codex_tool_call("write_file", {"path": "src/main.py", "content": "x"})]
+        mods = _collect_codex_modifications(events, session_cwd=None)
+        assert "src/main.py" in mods
+
+    def test_apply_patch_openai_update_format(self):
+        from reproducible_trajectories.trajectory import _collect_codex_modifications
+        patch = "*** Begin Patch\n*** Update File: src/utils.py\n@@ -1 +1 @@\n-old\n+new\n*** End Patch"
+        events = [_make_codex_tool_call("apply_patch", {"patch": patch})]
+        mods = _collect_codex_modifications(events, session_cwd="/repo")
+        assert "/repo/src/utils.py" in mods
+        assert mods["/repo/src/utils.py"]["tool"] == "apply_patch"
+
+    def test_apply_patch_openai_add_format(self):
+        from reproducible_trajectories.trajectory import _collect_codex_modifications
+        patch = "*** Begin Patch\n*** Add File: newfile.py\n+def foo(): pass\n*** End Patch"
+        events = [_make_codex_tool_call("apply_patch", {"patch": patch})]
+        mods = _collect_codex_modifications(events, session_cwd="/repo")
+        assert "/repo/newfile.py" in mods
+
+    def test_apply_patch_unified_diff_format(self):
+        from reproducible_trajectories.trajectory import _collect_codex_modifications
+        patch = "--- a/tests/test_main.py\n+++ b/tests/test_main.py\n@@ -1 +1 @@\n-old\n+new"
+        events = [_make_codex_tool_call("apply_patch", {"patch": patch})]
+        mods = _collect_codex_modifications(events, session_cwd="/repo")
+        assert "/repo/tests/test_main.py" in mods
+
+    def test_apply_patch_input_field_fallback(self):
+        from reproducible_trajectories.trajectory import _collect_codex_modifications
+        patch = "*** Begin Patch\n*** Update File: file.py\n@@ -1 +1 @@\n-a\n+b\n*** End Patch"
+        events = [_make_codex_tool_call("apply_patch", {"input": patch})]
+        mods = _collect_codex_modifications(events, session_cwd="/repo")
+        assert "/repo/file.py" in mods
+
+    def test_first_modification_wins(self):
+        from reproducible_trajectories.trajectory import _collect_codex_modifications
+        events = [
+            _make_codex_tool_call("write_file", {"path": "/repo/file.py", "content": "v1"}),
+            _make_codex_tool_call("write_file", {"path": "/repo/file.py", "content": "v2"}),
+        ]
+        mods = _collect_codex_modifications(events)
+        assert mods["/repo/file.py"]["input"]["content"] == "v1"
+
+    def test_empty_events(self):
+        from reproducible_trajectories.trajectory import _collect_codex_modifications
+        assert _collect_codex_modifications([]) == {}
+
+    def test_ignores_unknown_tools(self):
+        from reproducible_trajectories.trajectory import _collect_codex_modifications
+        events = [_make_codex_tool_call("shell", {"command": "ls -la"})]
+        mods = _collect_codex_modifications(events, session_cwd="/repo")
+        assert mods == {}
+
+    def test_malformed_arguments_ignored(self):
+        from reproducible_trajectories.trajectory import _collect_codex_modifications
+        events = [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_bad",
+                        "type": "function",
+                        "function": {"name": "write_file", "arguments": "not-json"},
+                    }
+                ],
+            }
+        ]
+        mods = _collect_codex_modifications(events)
+        assert mods == {}
