@@ -873,7 +873,7 @@ class TestVerifyTrajectories:
 # add_trajectories_to_repo
 # ---------------------------------------------------------------------------
 
-class TestAddTrajectoriestoRepo:
+class TestAddTrajectoriesToRepo:
     def _init_repo(self, path):
         subprocess.run(["git", "init", str(path)], check=True, capture_output=True)
         subprocess.run(
