@@ -18,7 +18,10 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-import pi_trajectory
+try:
+    from . import pi_trajectory
+except ImportError:  # pragma: no cover - allows direct script execution
+    import pi_trajectory
 
 
 # ---------------------------------------------------------------------------
