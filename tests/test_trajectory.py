@@ -1067,6 +1067,21 @@ class TestGetCodexSessionInfo:
         assert session_id is None
         assert cwd is None
 
+    def test_session_meta_payload_format(self):
+        from reproducible_trajectories.trajectory import _get_codex_session_info
+        events = [
+            {
+                "type": "session_meta",
+                "payload": {
+                    "id": "sess-live",
+                    "cwd": "/repo",
+                },
+            }
+        ]
+        session_id, cwd = _get_codex_session_info(events)
+        assert session_id == "sess-live"
+        assert cwd == "/repo"
+
 
 # ---------------------------------------------------------------------------
 # _collect_codex_modifications
@@ -1085,6 +1100,17 @@ def _make_codex_tool_call(name, args):
                 },
             }
         ],
+    }
+
+
+def _make_codex_response_item(name, input_):
+    return {
+        "type": "response_item",
+        "payload": {
+            "type": "custom_tool_call",
+            "name": name,
+            "input": input_,
+        },
     }
 
 
@@ -1172,3 +1198,31 @@ class TestCollectCodexModifications:
         ]
         mods = _collect_codex_modifications(events)
         assert mods == {}
+
+    def test_response_item_custom_tool_call_patch(self):
+        from reproducible_trajectories.trajectory import _collect_codex_modifications
+        patch = "*** Begin Patch\n*** Update File: src/live.py\n@@\n-old\n+new\n*** End Patch"
+        events = [_make_codex_response_item("apply_patch", patch)]
+        mods = _collect_codex_modifications(events, session_cwd="/repo")
+        assert "/repo/src/live.py" in mods
+        assert mods["/repo/src/live.py"]["tool"] == "apply_patch"
+
+    def test_patch_apply_end_changes_format(self):
+        from reproducible_trajectories.trajectory import _collect_codex_modifications
+        events = [
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "patch_apply_end",
+                    "success": True,
+                    "changes": {
+                        "/repo/reproducible_trajectories/__init__.py": {
+                            "type": "update"
+                        }
+                    },
+                },
+            }
+        ]
+        mods = _collect_codex_modifications(events, session_cwd="/repo")
+        assert "/repo/reproducible_trajectories/__init__.py" in mods
+        assert mods["/repo/reproducible_trajectories/__init__.py"]["tool"] == "apply_patch"
