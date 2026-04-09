@@ -9,6 +9,21 @@ import os
 from pathlib import Path
 
 
+def get_sessions_dir():
+    """Return the pi sessions directory."""
+    pi_agent_dir = os.environ.get("PI_CODING_AGENT_DIR")
+    if pi_agent_dir:
+        return Path(pi_agent_dir) / "sessions"
+    return Path.home() / ".pi" / "agent" / "sessions"
+
+
+def iter_session_paths():
+    """Yield all pi session JSONL files."""
+    pi_sessions = get_sessions_dir()
+    if pi_sessions.is_dir():
+        yield from sorted(pi_sessions.rglob("*.jsonl"))
+
+
 def is_pi_trajectory(events):
     """Detect pi coding agent trajectory format."""
     for e in events:
@@ -106,13 +121,7 @@ def normalize_trajectory(events):
 
 def resolve_session_path(trajectory_arg):
     """Search pi session directories for a trajectory by ID fragment."""
-    pi_agent_dir = os.environ.get("PI_CODING_AGENT_DIR")
-    if pi_agent_dir:
-        pi_sessions = Path(pi_agent_dir) / "sessions"
-    else:
-        pi_sessions = Path.home() / ".pi" / "agent" / "sessions"
-    if pi_sessions.is_dir():
-        matches = [p for p in pi_sessions.rglob("*.jsonl") if trajectory_arg in p.name]
-        if matches:
-            return str(matches[0])
+    matches = [p for p in iter_session_paths() if trajectory_arg in p.name]
+    if matches:
+        return str(matches[0])
     return None

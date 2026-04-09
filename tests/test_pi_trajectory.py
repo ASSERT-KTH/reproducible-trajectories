@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 
 
@@ -192,3 +193,64 @@ class TestResolvePiSessionPath:
 
         resolved = resolve_trajectory_path("pi-session-456", str(tmp_path / "claude"))
         assert resolved == str(traj)
+
+
+class TestOpenSourceTrajectoriesWithPi:
+    def test_scans_pi_sessions(self, tmp_path, monkeypatch):
+        from reproducible_trajectories.trajectory import open_source_trajectories
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "remote", "add", "origin", "https://github.com/example/public-repo.git"],
+            check=True,
+            capture_output=True,
+            cwd=str(repo),
+        )
+
+        pi_dir = tmp_path / ".pi-agent"
+        sessions = pi_dir / "sessions" / "project"
+        sessions.mkdir(parents=True)
+        traj = sessions / "pi-open-source.jsonl"
+        _write_jsonl(
+            traj,
+            [
+                {"type": "session", "id": "sess-1", "cwd": str(repo)},
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "toolCall",
+                                "id": "call-1",
+                                "name": "write",
+                                "arguments": {
+                                    "path": str(repo / "f.py"),
+                                    "content": "x = 1\n",
+                                },
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "message",
+                    "message": {"role": "toolResult", "toolCallId": "call-1", "content": "OK"},
+                },
+            ],
+        )
+
+        monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_dir))
+        monkeypatch.setattr(
+            "reproducible_trajectories.trajectory._is_public_github_repo",
+            lambda owner_repo: True,
+        )
+
+        results = open_source_trajectories(claude_dir=str(tmp_path / "claude"), codex_dir=str(tmp_path / "codex"))
+
+        assert len(results) == 1
+        assert results[0]["local_folder"] == str(repo)
+        assert results[0]["github_repo"] == "https://github.com/example/public-repo"
+        assert results[0]["trajectories"] == [str(traj)]
+        assert results[0]["edited_files"] == [str(repo / "f.py")]

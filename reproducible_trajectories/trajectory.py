@@ -971,8 +971,7 @@ def _collect_codex_modifications(events, session_cwd=None):
 
 def open_source_trajectories(claude_dir=None, codex_dir=None):
     """
-    Scan all trajectories in ~/.claude/projects/ and ~/.codex/sessions/ and
-    return those where:
+    Scan Claude Code, pi, and Codex trajectories and return those where:
       1. Every edit is within a single git repository.
       2. That git repository has at least one public GitHub remote.
 
@@ -1035,6 +1034,16 @@ def open_source_trajectories(claude_dir=None, codex_dir=None):
 
     # --- Claude Code trajectories ---
     for traj_path in sorted(claude_dir.glob('projects/**/*.jsonl')):
+        try:
+            events = parse_trajectory(str(traj_path))
+        except (json.JSONDecodeError, OSError):
+            continue
+        sequence, _tool_uses = build_sequence(events)
+        modifications = collect_modifications(sequence)
+        _process_modifications(traj_path, modifications)
+
+    # --- pi trajectories ---
+    for traj_path in pi_trajectory.iter_session_paths():
         try:
             events = parse_trajectory(str(traj_path))
         except (json.JSONDecodeError, OSError):
@@ -1166,7 +1175,7 @@ def main(argv=None):
 
     p_oss = subparsers.add_parser(
         "open-source-trajectories",
-        help="List trajectories whose edits are all within a public GitHub repo",
+        help="List Claude/pi/Codex trajectories whose edits are all within a public GitHub repo",
     )
     p_oss.add_argument(
         "--claude-dir",
