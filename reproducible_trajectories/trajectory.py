@@ -887,6 +887,10 @@ def _get_codex_session_info(events):
     for e in events:
         if not isinstance(e, dict):
             continue
+        if e.get('type') == 'session_meta':
+            payload = e.get('payload') or {}
+            if payload.get('cwd'):
+                return payload.get('id') or payload.get('session_id'), payload['cwd']
         # Chat messages (user/assistant/tool) carry a 'role' field — skip them.
         # Session metadata events have 'cwd' but no 'role'.
         if e.get('role'):
@@ -894,6 +898,52 @@ def _get_codex_session_info(events):
         if e.get('cwd'):
             return e.get('id') or e.get('session_id'), e['cwd']
     return None, None
+
+
+def _normalize_codex_tool_call(name, raw_input, session_cwd):
+    """Return (absolute_path, tool_name, input_dict) for a Codex edit call."""
+    if name == 'write_file':
+        args = raw_input if isinstance(raw_input, dict) else {}
+        path = args.get('path', '')
+        if not path:
+            return None
+        if not os.path.isabs(path) and session_cwd:
+            path = str(Path(session_cwd) / path)
+        return path, 'write_file', args
+
+    if name != 'apply_patch':
+        return None
+
+    if isinstance(raw_input, dict):
+        args = raw_input
+        patch = args.get('patch') or args.get('input', '')
+    elif isinstance(raw_input, str):
+        patch = raw_input
+        args = {'input': raw_input}
+    else:
+        return None
+
+    if not isinstance(patch, str):
+        return None
+
+    for line in patch.splitlines():
+        for prefix in ('*** Update File: ', '*** Add File: '):
+            if line.startswith(prefix):
+                path = line[len(prefix):].strip()
+                if path:
+                    if not os.path.isabs(path) and session_cwd:
+                        path = str(Path(session_cwd) / path)
+                    return path, 'apply_patch', args
+        if line.startswith('+++ '):
+            path = line[4:].strip()
+            if path.startswith('b/'):
+                path = path[2:]
+            if path and path != '/dev/null':
+                if not os.path.isabs(path) and session_cwd:
+                    path = str(Path(session_cwd) / path)
+                return path, 'apply_patch', args
+
+    return None
 
 
 def _collect_codex_modifications(events, session_cwd=None):
@@ -913,6 +963,29 @@ def _collect_codex_modifications(events, session_cwd=None):
     for e in events:
         if not isinstance(e, dict):
             continue
+
+        payload = e.get('payload') or {}
+        if e.get('type') == 'patch_apply_end' or payload.get('type') == 'patch_apply_end':
+            patch_payload = payload if payload.get('type') == 'patch_apply_end' else e.get('payload') or {}
+            if patch_payload.get('success'):
+                for path in (patch_payload.get('changes') or {}):
+                    if path and path not in seen:
+                        seen[path] = {'tool': 'apply_patch', 'input': patch_payload}
+
+        if e.get('type') == 'response_item' and payload.get('type') in ('function_call', 'custom_tool_call'):
+            name = payload.get('name', '')
+            raw_input = payload.get('input')
+            if raw_input is None and isinstance(payload.get('arguments'), str):
+                try:
+                    raw_input = json.loads(payload.get('arguments', '{}'))
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    raw_input = {}
+            normalized = _normalize_codex_tool_call(name, raw_input, session_cwd)
+            if normalized is not None:
+                path, tool, args = normalized
+                if path not in seen:
+                    seen[path] = {'tool': tool, 'input': args}
+
         tool_calls = e.get('tool_calls') or []
         for tc in tool_calls:
             if not isinstance(tc, dict):
@@ -923,39 +996,11 @@ def _collect_codex_modifications(events, session_cwd=None):
                 args = json.loads(func.get('arguments', '{}'))
             except (json.JSONDecodeError, TypeError, ValueError):
                 args = {}
-
-            if name == 'write_file':
-                path = args.get('path', '')
-                if path:
-                    if not os.path.isabs(path) and session_cwd:
-                        path = str(Path(session_cwd) / path)
-                    if path not in seen:
-                        seen[path] = {'tool': 'write_file', 'input': args}
-
-            elif name == 'apply_patch':
-                patch = args.get('patch') or args.get('input', '')
-                if not isinstance(patch, str):
-                    continue
-                for line in patch.splitlines():
-                    # OpenAI custom patch format
-                    for prefix in ('*** Update File: ', '*** Add File: '):
-                        if line.startswith(prefix):
-                            path = line[len(prefix):].strip()
-                            if path:
-                                if not os.path.isabs(path) and session_cwd:
-                                    path = str(Path(session_cwd) / path)
-                                if path not in seen:
-                                    seen[path] = {'tool': 'apply_patch', 'input': args}
-                    # Standard unified diff format: "+++ b/path" or "+++ path"
-                    if line.startswith('+++ '):
-                        path = line[4:].strip()
-                        if path.startswith('b/'):
-                            path = path[2:]
-                        if path and path != '/dev/null':
-                            if not os.path.isabs(path) and session_cwd:
-                                path = str(Path(session_cwd) / path)
-                            if path not in seen:
-                                seen[path] = {'tool': 'apply_patch', 'input': args}
+            normalized = _normalize_codex_tool_call(name, args, session_cwd)
+            if normalized is not None:
+                path, tool, normalized_args = normalized
+                if path not in seen:
+                    seen[path] = {'tool': tool, 'input': normalized_args}
     return seen
 
 
