@@ -18,6 +18,11 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+try:
+    from . import pi_trajectory
+except ImportError:  # pragma: no cover - allows direct script execution
+    import pi_trajectory
+
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -30,6 +35,8 @@ def parse_trajectory(path):
             line = line.strip()
             if line:
                 events.append(json.loads(line))
+    if pi_trajectory.is_pi_trajectory(events):
+        events = pi_trajectory.normalize_trajectory(events)
     return events
 
 
@@ -67,6 +74,9 @@ def resolve_trajectory_path(trajectory_arg, claude_dir):
     matches = list(Path(claude_dir).glob(f"projects/**/{trajectory_arg}.jsonl"))
     if matches:
         return str(matches[0])
+    pi_match = pi_trajectory.resolve_session_path(trajectory_arg)
+    if pi_match:
+        return pi_match
     return trajectory_arg
 
 
@@ -1006,8 +1016,7 @@ def _collect_codex_modifications(events, session_cwd=None):
 
 def open_source_trajectories(claude_dir=None, codex_dir=None):
     """
-    Scan all trajectories in ~/.claude/projects/ and ~/.codex/sessions/ and
-    return those where:
+    Scan Claude Code, pi, and Codex trajectories and return those where:
       1. Every edit is within a single git repository.
       2. That git repository has at least one public GitHub remote.
 
@@ -1070,6 +1079,16 @@ def open_source_trajectories(claude_dir=None, codex_dir=None):
 
     # --- Claude Code trajectories ---
     for traj_path in sorted(claude_dir.glob('projects/**/*.jsonl')):
+        try:
+            events = parse_trajectory(str(traj_path))
+        except (json.JSONDecodeError, OSError):
+            continue
+        sequence, _tool_uses = build_sequence(events)
+        modifications = collect_modifications(sequence)
+        _process_modifications(traj_path, modifications)
+
+    # --- pi trajectories ---
+    for traj_path in pi_trajectory.iter_session_paths():
         try:
             events = parse_trajectory(str(traj_path))
         except (json.JSONDecodeError, OSError):
@@ -1201,7 +1220,7 @@ def main(argv=None):
 
     p_oss = subparsers.add_parser(
         "open-source-trajectories",
-        help="List trajectories whose edits are all within a public GitHub repo",
+        help="List Claude/pi/Codex trajectories whose edits are all within a public GitHub repo",
     )
     p_oss.add_argument(
         "--claude-dir",
