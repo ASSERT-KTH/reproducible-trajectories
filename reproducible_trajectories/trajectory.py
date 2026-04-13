@@ -885,6 +885,20 @@ def _is_public_github_repo(owner_repo):
         return False
 
 
+def _public_github_repo_url(repo_root, public_cache):
+    """Return a public GitHub repo URL for repo_root, or None."""
+    github_urls = _get_github_remote_urls(repo_root)
+    for url in sorted(github_urls):
+        owner_repo = _parse_github_owner_repo(url)
+        if owner_repo is None:
+            continue
+        if owner_repo not in public_cache:
+            public_cache[owner_repo] = _is_public_github_repo(owner_repo)
+        if public_cache[owner_repo]:
+            return f'https://github.com/{owner_repo}'
+    return None
+
+
 def _get_codex_session_info(events):
     """
     Extract (session_id, cwd) from OpenAI Codex CLI session events.
@@ -1014,14 +1028,15 @@ def _collect_codex_modifications(events, session_cwd=None):
     return seen
 
 
-def open_source_trajectories(claude_dir=None, codex_dir=None):
+def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=False):
     """
-    Scan Claude Code, pi, and Codex trajectories and return those where:
-      1. Every edit is within a single git repository.
-      2. That git repository has at least one public GitHub remote.
+    Scan Claude Code, pi, and Codex trajectories and return those where every
+    edit is within a single git repository.
 
     Returns list of dicts, one per unique (local_folder, github_repo) pair:
       {local_folder, github_repo, trajectories: [...], edited_files: [...]}
+
+    If public_only is True, only keep repositories with a public GitHub remote.
     """
     if claude_dir is None:
         claude_dir = Path.home() / '.claude'
@@ -1036,7 +1051,7 @@ def open_source_trajectories(claude_dir=None, codex_dir=None):
     _public_cache = {}
 
     def _process_modifications(traj_path, modifications):
-        """Shared logic: group trajectory by public-GitHub repo."""
+        """Shared logic: group a trajectory by git repo and public GitHub URL."""
         if not modifications:
             return
 
@@ -1055,20 +1070,8 @@ def open_source_trajectories(claude_dir=None, codex_dir=None):
 
         repo_root = next(iter(git_roots))
 
-        # Find a public GitHub remote for this repo
-        github_urls = _get_github_remote_urls(repo_root)
-        public_repo_url = None
-        for url in sorted(github_urls):
-            owner_repo = _parse_github_owner_repo(url)
-            if owner_repo is None:
-                continue
-            if owner_repo not in _public_cache:
-                _public_cache[owner_repo] = _is_public_github_repo(owner_repo)
-            if _public_cache[owner_repo]:
-                public_repo_url = f'https://github.com/{owner_repo}'
-                break
-
-        if public_repo_url is None:
+        public_repo_url = _public_github_repo_url(repo_root, _public_cache)
+        if public_only and public_repo_url is None:
             return
 
         key = (repo_root, public_repo_url)
@@ -1121,6 +1124,60 @@ def open_source_trajectories(claude_dir=None, codex_dir=None):
         }
         for (local_folder, github_repo), info in sorted(groups.items())
     ]
+
+
+def open_source_trajectories(claude_dir=None, codex_dir=None):
+    """Return shareable trajectories limited to public GitHub repositories."""
+    return collect_shareable_trajectories(
+        claude_dir=claude_dir,
+        codex_dir=codex_dir,
+        public_only=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# share-trajectories CLI helpers
+# ---------------------------------------------------------------------------
+
+def _prompt_share_scope():
+    """Ask whether to share all trajectories or only open-source ones."""
+    print("Do you want to:")
+    print("  1) share all trajectories")
+    print("  2) only share the ones from open-source repositories")
+    answer = input(
+        "All collected data will be properly filtered and anonymized. [1/2/N] "
+    ).strip().lower()
+    if answer == '1':
+        return 'all'
+    if answer == '2':
+        return 'open-source'
+    return None
+
+
+def _share_scope_results(all_results, scope):
+    """Return the repository groups matching the selected sharing scope."""
+    if scope == 'all':
+        return all_results
+    return [r for r in all_results if r['github_repo']]
+
+
+def _share_scope_label(scope):
+    """Return a human-readable label for the selected sharing scope."""
+    if scope == 'all':
+        return 'all repos'
+    return 'open-source repos'
+
+
+def _share_target_label(result):
+    """Return the best label for a share target."""
+    return result['github_repo'] or f"{result['local_folder']}  (private/non-GitHub repo)"
+
+
+def _share_target_slug(result, index):
+    """Return a stable archive folder name for a share target."""
+    if result['github_repo']:
+        return result['github_repo'].replace('https://github.com/', '').replace('/', '_')
+    return f"repo_{index:03d}"
 
 
 # ---------------------------------------------------------------------------
@@ -1218,18 +1275,29 @@ def main(argv=None):
         help="Report what would be copied without writing anything",
     )
 
-    p_oss = subparsers.add_parser(
-        "open-source-trajectories",
-        help="List Claude/pi/Codex trajectories whose edits are all within a public GitHub repo",
+    p_share = subparsers.add_parser(
+        "share-trajectories",
+        aliases=["open-source-trajectories"],
+        help="Share local trajectories from all repos or only open-source ones",
     )
-    p_oss.add_argument(
+    p_share.add_argument(
         "--claude-dir",
         default=None,
         help="Path to .claude directory (default: ~/.claude)",
     )
-    p_oss.add_argument("--json", action="store_true", help="Output results as JSON")
-    p_oss.add_argument("--yes", action="store_true", help="Auto-confirm sharing all repos (non-interactive)")
-    p_oss.add_argument(
+    p_share.add_argument("--json", action="store_true", help="Output results as JSON")
+    p_share.add_argument(
+        "--yes",
+        action="store_true",
+        help="Auto-confirm sharing all trajectories for the selected scope",
+    )
+    p_share.add_argument(
+        "--scope",
+        choices=["all", "open-source"],
+        default=None,
+        help="Sharing scope for non-interactive use (default: ask interactively)",
+    )
+    p_share.add_argument(
         "--codex-dir",
         default=None,
         help="Path to Codex CLI sessions directory (default: ~/.codex)",
@@ -1274,19 +1342,33 @@ def main(argv=None):
         collect_run()
         return
 
-    if args.command == "open-source-trajectories":
+    if args.command in ("share-trajectories", "open-source-trajectories"):
         codex_dir = args.codex_dir if hasattr(args, 'codex_dir') else None
-        results = open_source_trajectories(claude_dir=str(claude_dir), codex_dir=codex_dir)
+        all_results = collect_shareable_trajectories(
+            claude_dir=str(claude_dir),
+            codex_dir=codex_dir,
+        )
+        selected_scope = args.scope
+        if selected_scope is None:
+            if args.command == "open-source-trajectories" or args.yes or args.json:
+                selected_scope = "open-source"
+            else:
+                selected_scope = _prompt_share_scope()
+                if selected_scope is None:
+                    print("Sharing cancelled.")
+                    return
+        results = _share_scope_results(all_results, selected_scope)
         if args.json:
             print(json.dumps(results, indent=2))
             return
         n = sum(len(r['trajectories']) for r in results)
-        print(f"🔍 Found {n} trajectories in open-source repos")
+        print(f"🔍 Found {n} trajectories in {_share_scope_label(selected_scope)}")
         if not results:
+            print("No trajectories available for the selected scope.")
             return
         print()
         for r in results:
-            print(f"{r['local_folder']}  {r['github_repo']}")
+            print(f"{r['local_folder']}  {_share_target_label(r)}")
             for f in r['edited_files']:
                 print(f"  {f}")
         print()
@@ -1297,13 +1379,17 @@ def main(argv=None):
         if args.yes:
             answer = 'y'
         else:
-            answer = input("Do you agree to share them all with the KTH experiment on coding agents? [y/N] ").strip().lower()
+            answer = input(
+                "Do you agree to share all of these trajectories with the KTH experiment on coding agents? [y/N] "
+            ).strip().lower()
         if answer == 'y':
             approved = results
         else:
             approved = []
             for r in results:
-                a = input(f"  Share {r['github_repo']} ({len(r['trajectories'])} trajectories)? [y/N] ").strip().lower()
+                a = input(
+                    f"  Share {_share_target_label(r)} ({len(r['trajectories'])} trajectories)? [y/N] "
+                ).strip().lower()
                 if a == 'y':
                     approved.append(r)
 
@@ -1315,6 +1401,7 @@ def main(argv=None):
         github_urls = sorted({r['github_repo'] for r in approved})
         metadata = {
             'git_email': git_email,
+            'share_scope': selected_scope,
             'github_repos': github_urls,
             'trajectories': all_trajs,
         }
@@ -1322,8 +1409,8 @@ def main(argv=None):
             zip_path = tmp.name
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             zf.writestr('metadata.json', json.dumps(metadata, indent=2))
-            for r in approved:
-                repo_slug = r['github_repo'].replace('https://github.com/', '').replace('/', '_')
+            for index, r in enumerate(approved, start=1):
+                repo_slug = _share_target_slug(r, index)
                 for t in r['trajectories']:
                     zf.write(t, f"{repo_slug}/{Path(t).name}")
         print(f"Uploading {len(all_trajs)} trajectories ...")

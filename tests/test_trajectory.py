@@ -714,6 +714,97 @@ class TestParseGithubOwnerRepo:
 
 
 # ---------------------------------------------------------------------------
+# share-trajectories
+# ---------------------------------------------------------------------------
+
+class TestShareTrajectories:
+    def _write_share_trajectory(self, root, repo, session_id):
+        traj_dir = root / "claude" / "projects" / "proj"
+        traj_dir.mkdir(parents=True)
+        traj_path = traj_dir / f"{session_id}.jsonl"
+        events = [
+            _make_tool_use_event(
+                "e1",
+                "t1",
+                "Write",
+                {"file_path": str(repo / "src" / "main.py"), "content": "print('hi')\n"},
+                session_id=session_id,
+                cwd=str(repo),
+            ),
+        ]
+        _write_jsonl(str(traj_path), events)
+        return traj_path
+
+    def test_collect_shareable_trajectories_includes_private_repo(self, tmp_path, monkeypatch):
+        from reproducible_trajectories.trajectory import collect_shareable_trajectories
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._write_share_trajectory(tmp_path, repo, "share-session-1")
+
+        monkeypatch.setattr(
+            "reproducible_trajectories.trajectory._find_git_root",
+            lambda _path: str(repo),
+        )
+        monkeypatch.setattr(
+            "reproducible_trajectories.trajectory._get_github_remote_urls",
+            lambda _repo_path: set(),
+        )
+
+        results = collect_shareable_trajectories(
+            claude_dir=str(tmp_path / "claude"),
+            codex_dir=str(tmp_path / "codex"),
+        )
+
+        assert len(results) == 1
+        assert results[0]["local_folder"] == str(repo)
+        assert results[0]["github_repo"] is None
+        assert len(results[0]["trajectories"]) == 1
+
+    def test_open_source_trajectories_excludes_private_repo(self, tmp_path, monkeypatch):
+        from reproducible_trajectories.trajectory import open_source_trajectories
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._write_share_trajectory(tmp_path, repo, "share-session-2")
+
+        monkeypatch.setattr(
+            "reproducible_trajectories.trajectory._find_git_root",
+            lambda _path: str(repo),
+        )
+        monkeypatch.setattr(
+            "reproducible_trajectories.trajectory._get_github_remote_urls",
+            lambda _repo_path: set(),
+        )
+
+        results = open_source_trajectories(
+            claude_dir=str(tmp_path / "claude"),
+            codex_dir=str(tmp_path / "codex"),
+        )
+
+        assert results == []
+
+    def test_prompt_share_scope_reassures_about_filtering(self, monkeypatch, capsys):
+        from reproducible_trajectories.trajectory import _prompt_share_scope
+
+        prompts = []
+
+        def fake_input(prompt):
+            prompts.append(prompt)
+            return "2"
+
+        monkeypatch.setattr("builtins.input", fake_input)
+
+        result = _prompt_share_scope()
+
+        captured = capsys.readouterr()
+        assert result == "open-source"
+        assert "1) share all trajectories" in captured.out
+        assert "2) only share the ones from open-source repositories" in captured.out
+        assert prompts == ["All collected data will be properly filtered and anonymized. [1/2/N] "]
+
+
+# ---------------------------------------------------------------------------
 # verify_trajectories  (integration-style with a temp git repo)
 # ---------------------------------------------------------------------------
 
