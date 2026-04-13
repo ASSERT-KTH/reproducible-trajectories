@@ -176,9 +176,9 @@ $ python -m reproducible_trajectories verify-trajectories . --json
 ]
 ```
 
-### open-source-trajectories
+### share-trajectories
 
-`open-source-trajectories` is the easiest way to contribute your local Claude Code, pi coding agent, and OpenAI Codex CLI trajectories to science. It scans `~/.claude/projects/` (Claude Code), `~/.pi/agent/sessions/` (pi coding agent), and `~/.codex/sessions/` (OpenAI Codex CLI), identifies trajectories whose edits are confined to a single public GitHub repository, and offers to upload them to the KTH research dataset.
+`share-trajectories` is the easiest way to contribute your local Claude Code, pi coding agent, and OpenAI Codex CLI trajectories to science. It scans `~/.claude/projects/` (Claude Code), `~/.pi/agent/sessions/` (pi coding agent), and `~/.codex/sessions/` (OpenAI Codex CLI), then lets you choose whether to share all trajectories or only the ones from open-source repositories.
 
 **Why it matters for science**: Trajectories produced on open-source projects are themselves open data — the code they touch is public, the repository is public, and the agent's reasoning process is therefore safe to share. Collecting these trajectories at scale enables empirical studies that are otherwise impossible: How do AI agents navigate real codebases? Which tool-use patterns lead to correct, mergeable commits? How does agent behaviour vary across programming languages or project sizes? Every trajectory you share is a data point that helps answer these questions.
 
@@ -186,19 +186,26 @@ $ python -m reproducible_trajectories verify-trajectories . --json
 
 ```sh
 pip install reproducible-trajectories
-python -m reproducible_trajectories open-source-trajectories
+python -m reproducible_trajectories share-trajectories
 ```
 
 The command will:
-1. Scan all local trajectories (Claude Code, pi coding agent, and Codex CLI) and filter those that only edit files inside a single public GitHub repository.
-2. Display the list of repos and edited files found.
-3. Ask whether you agree to share all of them, or step through them repo by repo.
-4. Zip and upload the approved trajectories together with a `metadata.json` containing your git email and the GitHub repo URLs.
-5. Ask whether to install a `pre-commit` hook in each repo so future trajectories are shared automatically.
-6. Print a summary: trajectories uploaded, hooks added.
+1. Start by asking whether you want to share all trajectories or only the ones from open-source repositories.
+2. Reassure you that all collected data will be properly filtered and anonymized.
+3. Scan all local trajectories (Claude Code, pi coding agent, and Codex CLI) and keep those whose edits stay within a single git repository.
+4. Display the repos and edited files found for the selected scope.
+5. Ask whether you agree to share all of them, or step through them repo by repo.
+6. Zip and upload the approved trajectories together with a `metadata.json` containing your git email and any public GitHub repo URLs that were found.
+7. Ask whether to install a `pre-commit` hook in each repo so future trajectories are shared automatically.
+8. Print a summary: trajectories uploaded, hooks added.
 
 ```
-$ python -m reproducible_trajectories open-source-trajectories
+$ python -m reproducible_trajectories share-trajectories
+Do you want to:
+  1) share all trajectories
+  2) only share the ones from open-source repositories
+All collected data will be properly filtered and anonymized. [1/2/N] 2
+
 🔍 Found 20 trajectories in open-source repos
 
 /home/user/myproject  https://github.com/org/myproject
@@ -212,8 +219,11 @@ Do you agree to share them all with the KTH experiment on coding agents? [y/N]
 **Non-interactive mode** (for use in scripts or hooks):
 
 ```sh
-python -m reproducible_trajectories open-source-trajectories --yes
+python -m reproducible_trajectories share-trajectories --scope open-source --yes
+python -m reproducible_trajectories share-trajectories --scope all --yes
 ```
+
+`open-source-trajectories` remains available as a backward-compatible alias.
 
 **Custom agent directories**:
 
