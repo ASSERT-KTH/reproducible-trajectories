@@ -38,7 +38,7 @@ In any case, we'll do serious privacy checks before publishing the dataset.
 The package is available on [PyPI](https://pypi.org/project/reproducible-trajectories/):
 
 ```sh
-pip install reproducible-trajectories
+pip install --upgrade reproducible-trajectories
 ```
 
 ## CLI
@@ -185,7 +185,7 @@ $ python -m reproducible_trajectories verify-trajectories . --json
 **How to run it** (interactive, one-time contribution):
 
 ```sh
-pip install reproducible-trajectories
+pip install --upgrade reproducible-trajectories
 python -m reproducible_trajectories share-trajectories
 ```
 
