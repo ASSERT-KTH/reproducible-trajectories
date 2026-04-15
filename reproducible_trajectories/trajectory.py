@@ -1028,7 +1028,7 @@ def _collect_codex_modifications(events, session_cwd=None):
     return seen
 
 
-def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=False):
+def collect_shareable_trajectories(claude_dir=None, codex_dir=None, cursor_dir=None, public_only=False):
     """
     Scan Claude Code, pi, and Codex trajectories and return those where every
     edit is within a single git repository.
@@ -1045,6 +1045,10 @@ def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=
     if codex_dir is None:
         codex_dir = Path.home() / '.codex'
     codex_dir = Path(codex_dir)
+
+    if cursor_dir is None:
+        cursor_dir = Path.home() / '.cursor'
+    cursor_dir = Path(cursor_dir)
 
     # key: (local_folder, github_repo) -> {trajectories: set, edited_files: set}
     groups = {}
@@ -1099,6 +1103,29 @@ def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=
         sequence, _tool_uses = build_sequence(events)
         modifications = collect_modifications(sequence)
         _process_modifications(traj_path, modifications)
+
+    # --- Cursor trajectories ---
+    for pattern in ('sessions/**/*.jsonl', 'projects/**/*.jsonl'):
+        for traj_path in sorted(cursor_dir.glob(pattern)):
+            try:
+                # First try to parse as a Claude-style trajectory
+                events = parse_trajectory(str(traj_path))
+                sequence, _tool_uses = build_sequence(events)
+                modifications = collect_modifications(sequence)
+
+                # Fallback: try Codex-style JSONL with write_file / apply_patch items
+                if not modifications:
+                    events2 = []
+                    with open(traj_path) as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                events2.append(json.loads(line))
+                    _, session_cwd = _get_codex_session_info(events2)
+                    modifications = _collect_codex_modifications(events2, session_cwd)
+            except (json.JSONDecodeError, OSError):
+                continue
+            _process_modifications(traj_path, modifications)
 
     # --- Codex CLI trajectories ---
     for traj_path in sorted(codex_dir.glob('sessions/**/*.jsonl')):
@@ -1302,6 +1329,11 @@ def main(argv=None):
         default=None,
         help="Path to Codex CLI sessions directory (default: ~/.codex)",
     )
+    p_share.add_argument(
+        "--cursor-dir",
+        default=None,
+        help="Path to Cursor sessions directory (default: ~/.cursor)",
+    )
 
     p_filter = subparsers.add_parser(
         "filter-trajectories",
@@ -1344,9 +1376,11 @@ def main(argv=None):
 
     if args.command in ("share-trajectories", "open-source-trajectories"):
         codex_dir = args.codex_dir if hasattr(args, 'codex_dir') else None
+        cursor_dir = args.cursor_dir if hasattr(args, 'cursor_dir') else None
         all_results = collect_shareable_trajectories(
             claude_dir=str(claude_dir),
             codex_dir=codex_dir,
+            cursor_dir=cursor_dir,
         )
         selected_scope = args.scope
         if selected_scope is None:
