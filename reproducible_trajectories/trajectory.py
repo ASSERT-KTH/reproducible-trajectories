@@ -13,6 +13,7 @@ import os
 import re
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 from collections import defaultdict
@@ -1028,9 +1029,172 @@ def _collect_codex_modifications(events, session_cwd=None):
     return seen
 
 
-def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=False):
+def _cursor_default_data_dir():
+    """Return the platform-specific default Cursor user-data directory."""
+    if sys.platform == 'darwin':
+        return Path.home() / 'Library' / 'Application Support' / 'Cursor' / 'User'
+    if sys.platform == 'win32':
+        appdata = os.environ.get('APPDATA') or str(Path.home() / 'AppData' / 'Roaming')
+        return Path(appdata) / 'Cursor' / 'User'
+    # Linux / other
+    xdg = os.environ.get('XDG_CONFIG_HOME') or str(Path.home() / '.config')
+    return Path(xdg) / 'Cursor' / 'User'
+
+
+def _extract_cursor_modifications(cursor_data_dir):
     """
-    Scan Claude Code, pi, and Codex trajectories and return those where every
+    Extract file modifications from Cursor's SQLite state.vscdb databases.
+
+    Cursor stores composer/agent session data in:
+      <cursor_data_dir>/workspaceStorage/<hash>/state.vscdb  (per-workspace)
+
+    Each database has an ``ItemTable`` table with ``key`` and ``value`` columns.
+    The key ``composer.composerData`` holds a JSON blob describing all composer
+    sessions for that workspace.  The workspace folder path is read from the
+    sibling ``workspace.json`` file (``{ "folder": "file:///abs/path" }``).
+
+    Returns a list of ``(session_label, modifications)`` tuples where:
+      - *session_label* is a string ``"cursor://<db_path>#<composerId>"``
+      - *modifications* is a ``{abs_file_path: {tool, input}}`` dict
+        (same schema as ``_collect_codex_modifications``)
+    """
+    cursor_data_dir = Path(cursor_data_dir)
+    results = []
+
+    workspace_storage = cursor_data_dir / 'workspaceStorage'
+    if not workspace_storage.is_dir():
+        return results
+
+    for db_path in sorted(workspace_storage.glob('*/state.vscdb')):
+        # Determine the workspace root from the sibling workspace.json
+        workspace_json = db_path.parent / 'workspace.json'
+        workspace_root = None
+        if workspace_json.is_file():
+            try:
+                with open(workspace_json) as f:
+                    wdata = json.load(f)
+                folder = wdata.get('folder', '')
+                # folder is a file URI like "file:///home/user/project"
+                if folder.startswith('file://'):
+                    workspace_root = folder[len('file://'):]
+                    # On Windows, file URIs look like "file:///C:/path" — after
+                    # stripping "file://", the result is "/C:/path".  Remove the
+                    # leading slash so the path is a valid Windows absolute path.
+                    if workspace_root.startswith('/') and len(workspace_root) > 2 and workspace_root[2] == ':':
+                        workspace_root = workspace_root[1:]
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        try:
+            conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+            try:
+                rows = conn.execute(
+                    "SELECT value FROM ItemTable WHERE key = 'composer.composerData'"
+                ).fetchall()
+            finally:
+                conn.close()
+        except sqlite3.DatabaseError:
+            continue
+
+        for (value,) in rows:
+            if not value:
+                continue
+            try:
+                data = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            composers = data.get('allComposers') or []
+            for composer in composers:
+                if not isinstance(composer, dict):
+                    continue
+                composer_id = composer.get('composerId') or composer.get('id') or ''
+                cwd = composer.get('cwd') or workspace_root
+                modifications = _collect_cursor_composer_modifications(composer, cwd)
+                if modifications:
+                    label = f'cursor://{db_path}#{composer_id}'
+                    results.append((label, modifications))
+
+    return results
+
+
+def _collect_cursor_composer_modifications(composer, cwd):
+    """
+    Parse a single Cursor composer object and return a modifications dict.
+
+    Cursor tool-call names for file operations vary across versions; we handle:
+      editFile / edit_file    — file edit (most common in agent mode)
+      createFile / create_file
+      writeFile / write_file
+      deleteFile / delete_file
+
+    The ``target_file`` / ``path`` argument may be relative; it is resolved
+    against *cwd* when provided.
+
+    Returns ``{abs_path: {tool, input}}`` — first modification per path wins.
+    """
+    seen = {}
+
+    def _resolve(path_str):
+        if not path_str:
+            return None
+        p = Path(path_str)
+        if not p.is_absolute() and cwd:
+            p = Path(cwd) / p
+        return str(p)
+
+    _write_tools = {
+        'editfile', 'edit_file',
+        'createfile', 'create_file',
+        'writefile', 'write_file',
+        'deletefile', 'delete_file',
+    }
+
+    conversation = composer.get('conversation') or []
+    for message in conversation:
+        if not isinstance(message, dict):
+            continue
+
+        # Tool calls may be nested at message level or inside content blocks
+        tool_calls = message.get('toolCalls') or message.get('tool_calls') or []
+        # Also look inside content array (some Cursor versions use this layout)
+        for block in message.get('content') or []:
+            if isinstance(block, dict) and block.get('type') in ('tool_use', 'tool_call'):
+                tool_calls.append(block)
+
+        for tc in tool_calls:
+            if not isinstance(tc, dict):
+                continue
+
+        # Normalize various nesting styles
+            name = (
+                tc.get('name')
+                or tc.get('toolName')
+                or tc.get('function', {}).get('name')
+                or ''
+            ).lower()
+
+            if name not in _write_tools:
+                continue
+
+            args = tc.get('args') or tc.get('input') or tc.get('parameters') or {}
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+
+            path_str = args.get('target_file') or args.get('path') or args.get('file_path') or ''
+            abs_path = _resolve(path_str)
+            if abs_path and abs_path not in seen:
+                seen[abs_path] = {'tool': name, 'input': args}
+
+    return seen
+
+
+def collect_shareable_trajectories(claude_dir=None, codex_dir=None, cursor_dir=None, public_only=False):
+    """
+    Scan Claude Code, pi, Codex, and Cursor trajectories and return those where every
     edit is within a single git repository.
 
     Returns list of dicts, one per unique (local_folder, github_repo) pair:
@@ -1045,6 +1209,10 @@ def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=
     if codex_dir is None:
         codex_dir = Path.home() / '.codex'
     codex_dir = Path(codex_dir)
+
+    if cursor_dir is None:
+        cursor_dir = _cursor_default_data_dir()
+    cursor_dir = Path(cursor_dir)
 
     # key: (local_folder, github_repo) -> {trajectories: set, edited_files: set}
     groups = {}
@@ -1099,6 +1267,10 @@ def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=
         sequence, _tool_uses = build_sequence(events)
         modifications = collect_modifications(sequence)
         _process_modifications(traj_path, modifications)
+
+    # --- Cursor trajectories (read from state.vscdb SQLite databases) ---
+    for label, modifications in _extract_cursor_modifications(cursor_dir):
+        _process_modifications(label, modifications)
 
     # --- Codex CLI trajectories ---
     for traj_path in sorted(codex_dir.glob('sessions/**/*.jsonl')):
@@ -1302,6 +1474,17 @@ def main(argv=None):
         default=None,
         help="Path to Codex CLI sessions directory (default: ~/.codex)",
     )
+    p_share.add_argument(
+        "--cursor-dir",
+        default=None,
+        help=(
+            "Path to Cursor user-data directory "
+            "(default: platform-specific: "
+            "~/Library/Application Support/Cursor/User on macOS, "
+            "~/.config/Cursor/User on Linux, "
+            "%%APPDATA%%\\Cursor\\User on Windows)"
+        ),
+    )
 
     p_filter = subparsers.add_parser(
         "filter-trajectories",
@@ -1344,9 +1527,11 @@ def main(argv=None):
 
     if args.command in ("share-trajectories", "open-source-trajectories"):
         codex_dir = args.codex_dir if hasattr(args, 'codex_dir') else None
+        cursor_dir = args.cursor_dir if hasattr(args, 'cursor_dir') else None
         all_results = collect_shareable_trajectories(
             claude_dir=str(claude_dir),
             codex_dir=codex_dir,
+            cursor_dir=cursor_dir,
         )
         selected_scope = args.scope
         if selected_scope is None:
