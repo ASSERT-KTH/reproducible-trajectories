@@ -1317,3 +1317,319 @@ class TestCollectCodexModifications:
         mods = _collect_codex_modifications(events, session_cwd="/repo")
         assert "/repo/reproducible_trajectories/__init__.py" in mods
         assert mods["/repo/reproducible_trajectories/__init__.py"]["tool"] == "apply_patch"
+
+
+# ---------------------------------------------------------------------------
+# Cursor SQLite extraction helpers
+# ---------------------------------------------------------------------------
+
+import sqlite3 as _sqlite3
+
+
+def _make_cursor_vscdb(db_path, composer_data):
+    """Create a minimal state.vscdb SQLite file with composer data."""
+    conn = _sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute(
+        "INSERT INTO ItemTable VALUES ('composer.composerData', ?)",
+        (json.dumps(composer_data),),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _make_workspace_json(ws_dir, folder_path):
+    ws_dir.mkdir(parents=True, exist_ok=True)
+    (ws_dir / 'workspace.json').write_text(
+        json.dumps({'folder': f'file://{folder_path}'})
+    )
+
+
+class TestCollectCursorComposerModifications:
+    def test_edit_file_tool_call(self, tmp_path):
+        from reproducible_trajectories.trajectory import _collect_cursor_composer_modifications
+        composer = {
+            'composerId': 'abc',
+            'cwd': '/repo',
+            'conversation': [
+                {
+                    'role': 'assistant',
+                    'toolCalls': [
+                        {
+                            'name': 'editFile',
+                            'args': {
+                                'target_file': 'src/foo.py',
+                                'instructions': 'fix bug',
+                                'code_edit': 'pass',
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+        mods = _collect_cursor_composer_modifications(composer, '/repo')
+        assert '/repo/src/foo.py' in mods
+        assert mods['/repo/src/foo.py']['tool'] == 'editfile'
+
+    def test_create_file_tool_call(self, tmp_path):
+        from reproducible_trajectories.trajectory import _collect_cursor_composer_modifications
+        composer = {
+            'composerId': 'abc',
+            'cwd': '/repo',
+            'conversation': [
+                {
+                    'role': 'assistant',
+                    'toolCalls': [
+                        {
+                            'name': 'createFile',
+                            'args': {'target_file': '/abs/new.py'},
+                        }
+                    ],
+                }
+            ],
+        }
+        mods = _collect_cursor_composer_modifications(composer, '/repo')
+        assert '/abs/new.py' in mods
+
+    def test_snake_case_tool_name(self):
+        from reproducible_trajectories.trajectory import _collect_cursor_composer_modifications
+        composer = {
+            'conversation': [
+                {
+                    'role': 'assistant',
+                    'toolCalls': [
+                        {'name': 'edit_file', 'args': {'target_file': 'a.py'}},
+                    ],
+                }
+            ]
+        }
+        mods = _collect_cursor_composer_modifications(composer, '/project')
+        assert '/project/a.py' in mods
+
+    def test_path_field_fallback(self):
+        from reproducible_trajectories.trajectory import _collect_cursor_composer_modifications
+        composer = {
+            'conversation': [
+                {
+                    'role': 'assistant',
+                    'toolCalls': [
+                        {'name': 'writeFile', 'args': {'path': 'b.py'}},
+                    ],
+                }
+            ]
+        }
+        mods = _collect_cursor_composer_modifications(composer, '/myrepo')
+        assert '/myrepo/b.py' in mods
+
+    def test_first_modification_wins(self):
+        from reproducible_trajectories.trajectory import _collect_cursor_composer_modifications
+        composer = {
+            'conversation': [
+                {
+                    'role': 'assistant',
+                    'toolCalls': [
+                        {'name': 'editFile', 'args': {'target_file': 'a.py', 'code_edit': 'v1'}},
+                        {'name': 'editFile', 'args': {'target_file': 'a.py', 'code_edit': 'v2'}},
+                    ],
+                }
+            ]
+        }
+        mods = _collect_cursor_composer_modifications(composer, '/r')
+        assert mods['/r/a.py']['input']['code_edit'] == 'v1'
+
+    def test_no_write_tools_returns_empty(self):
+        from reproducible_trajectories.trajectory import _collect_cursor_composer_modifications
+        composer = {
+            'conversation': [
+                {
+                    'role': 'assistant',
+                    'toolCalls': [
+                        {'name': 'readFile', 'args': {'target_file': 'a.py'}},
+                    ],
+                }
+            ]
+        }
+        mods = _collect_cursor_composer_modifications(composer, '/r')
+        assert mods == {}
+
+    def test_no_cwd_relative_path_not_resolved(self):
+        from reproducible_trajectories.trajectory import _collect_cursor_composer_modifications
+        composer = {
+            'conversation': [
+                {
+                    'role': 'assistant',
+                    'toolCalls': [
+                        {'name': 'editFile', 'args': {'target_file': 'rel/path.py'}},
+                    ],
+                }
+            ]
+        }
+        mods = _collect_cursor_composer_modifications(composer, None)
+        # Without cwd, relative path stays relative
+        assert 'rel/path.py' in mods
+
+    def test_content_block_tool_call(self):
+        """Tool calls nested in content array (alternate Cursor format)."""
+        from reproducible_trajectories.trajectory import _collect_cursor_composer_modifications
+        composer = {
+            'conversation': [
+                {
+                    'role': 'assistant',
+                    'content': [
+                        {
+                            'type': 'tool_use',
+                            'name': 'editFile',
+                            'args': {'target_file': 'x.py'},
+                        }
+                    ],
+                }
+            ]
+        }
+        mods = _collect_cursor_composer_modifications(composer, '/r')
+        assert '/r/x.py' in mods
+
+    def test_string_args_parsed_as_json(self):
+        from reproducible_trajectories.trajectory import _collect_cursor_composer_modifications
+        args_str = json.dumps({'target_file': 'z.py'})
+        composer = {
+            'conversation': [
+                {
+                    'role': 'assistant',
+                    'toolCalls': [
+                        {'name': 'editFile', 'args': args_str},
+                    ],
+                }
+            ]
+        }
+        mods = _collect_cursor_composer_modifications(composer, '/r')
+        assert '/r/z.py' in mods
+
+
+class TestExtractCursorModifications:
+    def test_basic_extraction(self, tmp_path):
+        from reproducible_trajectories.trajectory import _extract_cursor_modifications
+        ws_hash = 'abc123'
+        ws_dir = tmp_path / 'workspaceStorage' / ws_hash
+        ws_dir.mkdir(parents=True)
+        _make_workspace_json(ws_dir, '/myrepo')
+        composer_data = {
+            'allComposers': [
+                {
+                    'composerId': 'sess1',
+                    'cwd': '/myrepo',
+                    'conversation': [
+                        {
+                            'role': 'assistant',
+                            'toolCalls': [
+                                {'name': 'editFile', 'args': {'target_file': 'main.py'}},
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+        _make_cursor_vscdb(ws_dir / 'state.vscdb', composer_data)
+        results = _extract_cursor_modifications(tmp_path)
+        assert len(results) == 1
+        label, mods = results[0]
+        assert 'sess1' in label
+        assert '/myrepo/main.py' in mods
+
+    def test_workspace_json_folder_uri(self, tmp_path):
+        """workspace.json folder URI is resolved to absolute path."""
+        from reproducible_trajectories.trajectory import _extract_cursor_modifications
+        ws_dir = tmp_path / 'workspaceStorage' / 'def456'
+        ws_dir.mkdir(parents=True)
+        _make_workspace_json(ws_dir, '/projects/myapp')
+        composer_data = {
+            'allComposers': [
+                {
+                    'composerId': 'cid',
+                    'conversation': [
+                        {
+                            'role': 'assistant',
+                            'toolCalls': [
+                                {'name': 'createFile', 'args': {'target_file': 'new.py'}},
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+        _make_cursor_vscdb(ws_dir / 'state.vscdb', composer_data)
+        results = _extract_cursor_modifications(tmp_path)
+        assert len(results) == 1
+        _, mods = results[0]
+        # cwd from workspace.json should be used when composer has no cwd
+        assert '/projects/myapp/new.py' in mods
+
+    def test_empty_workspaceStorage(self, tmp_path):
+        from reproducible_trajectories.trajectory import _extract_cursor_modifications
+        (tmp_path / 'workspaceStorage').mkdir()
+        assert _extract_cursor_modifications(tmp_path) == []
+
+    def test_missing_workspaceStorage(self, tmp_path):
+        from reproducible_trajectories.trajectory import _extract_cursor_modifications
+        assert _extract_cursor_modifications(tmp_path) == []
+
+    def test_corrupt_db_skipped(self, tmp_path):
+        from reproducible_trajectories.trajectory import _extract_cursor_modifications
+        ws_dir = tmp_path / 'workspaceStorage' / 'bad'
+        ws_dir.mkdir(parents=True)
+        (ws_dir / 'state.vscdb').write_bytes(b'not a sqlite database')
+        assert _extract_cursor_modifications(tmp_path) == []
+
+    def test_no_composer_data_key(self, tmp_path):
+        from reproducible_trajectories.trajectory import _extract_cursor_modifications
+        ws_dir = tmp_path / 'workspaceStorage' / 'empty'
+        ws_dir.mkdir(parents=True)
+        conn = _sqlite3.connect(str(ws_dir / 'state.vscdb'))
+        conn.execute("CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO ItemTable VALUES ('some.other.key', '{}')")
+        conn.commit()
+        conn.close()
+        assert _extract_cursor_modifications(tmp_path) == []
+
+    def test_multiple_composers(self, tmp_path):
+        from reproducible_trajectories.trajectory import _extract_cursor_modifications
+        ws_dir = tmp_path / 'workspaceStorage' / 'multi'
+        ws_dir.mkdir(parents=True)
+        _make_workspace_json(ws_dir, '/r')
+        composer_data = {
+            'allComposers': [
+                {
+                    'composerId': 'c1',
+                    'cwd': '/r',
+                    'conversation': [
+                        {'role': 'assistant', 'toolCalls': [
+                            {'name': 'editFile', 'args': {'target_file': 'a.py'}}
+                        ]}
+                    ],
+                },
+                {
+                    'composerId': 'c2',
+                    'cwd': '/r',
+                    'conversation': [
+                        {'role': 'assistant', 'toolCalls': [
+                            {'name': 'editFile', 'args': {'target_file': 'b.py'}}
+                        ]}
+                    ],
+                },
+            ]
+        }
+        _make_cursor_vscdb(ws_dir / 'state.vscdb', composer_data)
+        results = _extract_cursor_modifications(tmp_path)
+        assert len(results) == 2
+        all_files = set()
+        for _, mods in results:
+            all_files.update(mods.keys())
+        assert '/r/a.py' in all_files
+        assert '/r/b.py' in all_files
+
+
+class TestCursorDefaultDataDir:
+    def test_returns_path(self):
+        from reproducible_trajectories.trajectory import _cursor_default_data_dir
+        result = _cursor_default_data_dir()
+        assert isinstance(result, Path)
+        assert 'Cursor' in str(result)

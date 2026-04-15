@@ -178,7 +178,7 @@ $ python -m reproducible_trajectories verify-trajectories . --json
 
 ### share-trajectories
 
-`share-trajectories` is the easiest way to contribute your local Claude Code, pi coding agent, and OpenAI Codex CLI trajectories to science. It scans `~/.claude/projects/` (Claude Code), `~/.pi/agent/sessions/` (pi coding agent), and `~/.codex/sessions/` (OpenAI Codex CLI), then lets you choose whether to share all trajectories or only the ones from open-source repositories.
+`share-trajectories` is the easiest way to contribute your local Claude Code, pi coding agent, OpenAI Codex CLI, and Cursor trajectories to science. It scans `~/.claude/projects/` (Claude Code), `~/.pi/agent/sessions/` (pi coding agent), `~/.codex/sessions/` (OpenAI Codex CLI), and the platform-specific Cursor user-data directory for `workspaceStorage/*/state.vscdb` files (Cursor), then lets you choose whether to share all trajectories or only the ones from open-source repositories.
 
 **Why it matters for science**: Trajectories produced on open-source projects are themselves open data — the code they touch is public, the repository is public, and the agent's reasoning process is therefore safe to share. Collecting these trajectories at scale enables empirical studies that are otherwise impossible: How do AI agents navigate real codebases? Which tool-use patterns lead to correct, mergeable commits? How does agent behaviour vary across programming languages or project sizes? Every trajectory you share is a data point that helps answer these questions.
 
@@ -231,13 +231,15 @@ python -m reproducible_trajectories share-trajectories --scope all --yes
 PI_CODING_AGENT_DIR=/path/to/.pi/agent \
 python -m reproducible_trajectories open-source-trajectories \
   --claude-dir /path/to/.claude \
-  --codex-dir /path/to/.codex
+  --codex-dir /path/to/.codex \
+  --cursor-dir /path/to/Cursor/User
 ```
 
 Supported agent trace formats:
 - **Claude Code** (`~/.claude/projects/**/*.jsonl`) — uses `Write`, `Edit`, `NotebookEdit` tool calls
 - **pi coding agent** (`~/.pi/agent/sessions/**/*.jsonl`, or `$PI_CODING_AGENT_DIR/sessions/**/*.jsonl`) — normalized to Claude-style `Read`/`Write`/`Edit`/`Bash` tool calls
 - **OpenAI Codex CLI** (`~/.codex/sessions/**/*.jsonl`) — uses `write_file` and `apply_patch` tool calls (both OpenAI custom patch format and standard unified diff)
+- **Cursor** (platform-specific `state.vscdb` SQLite databases in the Cursor user-data directory) — reads composer/agent session data from the `ItemTable` in each workspace's `state.vscdb` file and extracts `editFile`/`createFile`/`writeFile`/`deleteFile` tool calls
 
 ### collect-trajectories
 
