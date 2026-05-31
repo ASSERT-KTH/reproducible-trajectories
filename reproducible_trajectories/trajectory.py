@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 from collections import defaultdict
+from datetime import datetime, timedelta
 from pathlib import Path
 
 try:
@@ -748,6 +749,237 @@ def verify_trajectories(repo_path, claude_dir=None):
 
 
 # ---------------------------------------------------------------------------
+# find-reproducible-trajectories-claude (and future variants)
+# ---------------------------------------------------------------------------
+
+def _parse_iso(ts):
+    return datetime.fromisoformat(ts.replace('Z', '+00:00'))
+
+
+def _get_commit_timeline(repo_root):
+    """Return sorted list of (datetime, hash) for all commits across all refs."""
+    rc, out = _git(['log', '--format=%H %aI', '--all'], repo_root)
+    if rc != 0:
+        return []
+    commits = []
+    for line in out.strip().splitlines():
+        h, _, ts = line.partition(' ')
+        if h and ts:
+            try:
+                commits.append((_parse_iso(ts), h))
+            except ValueError:
+                pass
+    commits.sort()
+    return commits
+
+
+def _commit_time(repo_root, commit):
+    rc, out = _git(['log', '-1', '--format=%aI', commit], repo_root)
+    if rc != 0:
+        return None
+    try:
+        return _parse_iso(out.strip())
+    except ValueError:
+        return None
+
+
+def _end_commit_by_content(repo_root, rels, simulated, traj_end):
+    """
+    Search commits that touched each file; return the one whose content matches
+    the simulated output, choosing the commit closest to traj_end when multiple
+    candidates exist.  Only considers commits at or after traj_end - 10 min.
+    """
+    earliest = traj_end - timedelta(minutes=10)
+    candidates = {}  # hash -> (datetime, match_count)
+    for fp, rel in rels.items():
+        expected = simulated.get(fp)
+        if expected is None:
+            continue
+        rc, out = _git(['log', '--all', '--format=%H %aI', '--', rel], repo_root)
+        if rc != 0:
+            continue
+        for line in out.strip().splitlines():
+            h, _, ts_str = line.partition(' ')
+            if not h or not ts_str:
+                continue
+            try:
+                dt = _parse_iso(ts_str)
+            except ValueError:
+                continue
+            if dt < earliest:
+                continue
+            actual = _file_at(repo_root, h, rel)
+            if actual == expected:
+                if h not in candidates:
+                    candidates[h] = (dt, 0)
+                candidates[h] = (dt, candidates[h][1] + 1)
+    if not candidates:
+        return None
+    ranked = sorted(
+        candidates.items(),
+        key=lambda kv: (-kv[1][1], abs((kv[1][0] - traj_end).total_seconds())),
+    )
+    return ranked[0][0]
+
+
+def _end_commit_by_time(commits, traj_end, window_hours=24):
+    """Fallback: earliest commit within [traj_end, traj_end + window_hours]."""
+    limit = traj_end + timedelta(hours=window_hours)
+    for dt, h in commits:
+        if traj_end <= dt <= limit:
+            return h
+    return None
+
+
+def find_reproducible_trajectories_claude(claude_dir=None, window_hours=24):
+    """
+    Scan all Claude Code trajectories in claude_dir/projects/ and return those
+    whose Write/Edit ops reproduce the file state at the nearest commit after
+    the trajectory.
+
+    End-commit discovery order:
+      1. Content match: find a commit where the written file content matches.
+      2. Timestamp fallback: first commit within window_hours after trajectory end.
+
+    Returns list of dicts: {cwd, trajectory, commit_before, commit_after,
+                             strategy, files}
+    """
+    if claude_dir is None:
+        claude_dir = Path.home() / '.claude'
+    claude_dir = Path(claude_dir)
+
+    timelines = {}
+    results = []
+
+    for jsonl in sorted(claude_dir.glob('projects/**/*.jsonl')):
+        try:
+            events = parse_trajectory(str(jsonl))
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        _, cwd = get_session_info(events)
+        if not cwd or not Path(cwd).exists():
+            continue
+
+        timestamps = []
+        for e in events:
+            ts = e.get('timestamp')
+            if ts:
+                try:
+                    timestamps.append(_parse_iso(ts))
+                except ValueError:
+                    pass
+        if not timestamps:
+            continue
+        traj_start = min(timestamps)
+        traj_end = max(timestamps)
+
+        sequence, _tool_uses = build_sequence(events)
+        ops = []
+        for s in sequence:
+            if s['seq_type'] != 'tool_use':
+                continue
+            item = s['item']
+            if item.get('name') in ('Write', 'Edit'):
+                ops.append({'tool': item['name'], 'input': item.get('input', {})})
+        if not ops:
+            continue
+
+        rc, out = _git(['rev-parse', '--show-toplevel'], cwd)
+        if rc != 0:
+            continue
+        repo_root = out.strip()
+
+        if repo_root not in timelines:
+            timelines[repo_root] = _get_commit_timeline(repo_root)
+        commits = timelines[repo_root]
+
+        fps_seen = set()
+        fps_ordered = []
+        for op in ops:
+            fp = op['input'].get('file_path', '')
+            if fp and fp not in fps_seen:
+                fps_ordered.append(fp)
+                fps_seen.add(fp)
+
+        rels = {}
+        skip = False
+        for fp in fps_ordered:
+            rel = _rel(fp, repo_root)
+            if rel is None:
+                skip = True
+                break
+            rels[fp] = rel
+        if skip:
+            continue
+
+        start_commit = None
+        for dt, h in commits:
+            if dt <= traj_start:
+                start_commit = h
+
+        initial = {
+            fp: (_file_at(repo_root, start_commit, rel) if start_commit else None)
+            for fp, rel in rels.items()
+        }
+        simulated = _simulate_ops(ops, initial)
+
+        end_commit = _end_commit_by_content(repo_root, rels, simulated, traj_end)
+        strategy = 'content'
+        if end_commit is None:
+            end_commit = _end_commit_by_time(commits, traj_end, window_hours=window_hours)
+            strategy = 'timestamp'
+        if end_commit is None:
+            continue
+
+        parent = _get_parent(repo_root, end_commit)
+        if parent:
+            parent_time = _commit_time(repo_root, parent)
+            if parent_time and parent_time <= traj_start:
+                start_commit = parent
+                initial = {fp: _file_at(repo_root, start_commit, rel) for fp, rel in rels.items()}
+                simulated = _simulate_ops(ops, initial)
+
+        matched_files = []
+        any_mismatch = False
+        for fp, sim in simulated.items():
+            rel = rels.get(fp)
+            if not rel:
+                continue
+            actual = _file_at(repo_root, end_commit, rel)
+            if actual is None:
+                continue
+            if sim == actual:
+                matched_files.append(rel)
+            else:
+                any_mismatch = True
+
+        if not matched_files or any_mismatch:
+            continue
+
+        results.append({
+            'cwd': cwd,
+            'trajectory': jsonl.name,
+            'commit_before': start_commit[:12] if start_commit else None,
+            'commit_after': end_commit[:12],
+            'strategy': strategy,
+            'files': matched_files,
+        })
+
+    return results
+
+
+def find_reproducible_trajectories_copilot(window_hours=24):
+    """Placeholder: find reproducible trajectories from GitHub Copilot sessions."""
+    raise NotImplementedError("find_reproducible_trajectories_copilot is not yet implemented")
+
+
+def find_reproducible_trajectories_opencode(window_hours=24):
+    """Placeholder: find reproducible trajectories from OpenCode sessions."""
+    raise NotImplementedError("find_reproducible_trajectories_opencode is not yet implemented")
+
+
+# ---------------------------------------------------------------------------
 # add-trajectories-to-repo
 # ---------------------------------------------------------------------------
 
@@ -1334,6 +1566,33 @@ def main(argv=None):
         help="Find the most recent trajectory matching staged files, check reproducibility, and POST to API",
     )
 
+    p_find = subparsers.add_parser(
+        "find-reproducible-trajectories-claude",
+        help="Scan ~/.claude/projects for trajectories whose edits reproduce a nearby commit",
+    )
+    p_find.add_argument(
+        "--claude-dir",
+        default=None,
+        help="Path to .claude directory (default: ~/.claude)",
+    )
+    p_find.add_argument("--json", action="store_true", help="Output results as JSON")
+    p_find.add_argument(
+        "--output", "-o",
+        default=None,
+        help="Write JSON results to this file",
+    )
+    p_find.add_argument(
+        "--window-hours",
+        type=float,
+        default=24.0,
+        help="Hours after trajectory end to search for a commit via timestamp fallback (default: 24)",
+    )
+    p_find.add_argument(
+        "--yes",
+        action="store_true",
+        help="Auto-confirm submission to the server",
+    )
+
     args = parser.parse_args(argv)
     claude_dir = Path(args.claude_dir or Path.home() / ".claude") if hasattr(args, "claude_dir") else Path.home() / ".claude"
 
@@ -1440,6 +1699,67 @@ def main(argv=None):
         print(f"  Trajectories uploaded : {len(all_trajs)}")
         print(f"  Hooks added           : {hooks_added}")
         print("─────────────────────────────────────────")
+        return
+
+    if args.command == "find-reproducible-trajectories-claude":
+        results = find_reproducible_trajectories_claude(
+            claude_dir=str(claude_dir),
+            window_hours=args.window_hours,
+        )
+        if args.output:
+            Path(args.output).write_text(json.dumps(results, indent=2))
+            print(f"Wrote {len(results)} entries to {args.output}")
+            return
+        if args.json:
+            print(json.dumps(results, indent=2))
+            return
+        if not results:
+            print("No reproducible trajectories found.")
+            return
+        for r in results:
+            print(f"{r['trajectory']:<45} {r['commit_before']} -> {r['commit_after']}  [{r['strategy']}]")
+            for f in r['files']:
+                print(f"  {f}")
+        print()
+        if args.yes:
+            answer = 'y'
+        else:
+            answer = input(
+                f"Submit these {len(results)} reproducible trajectories to the KTH server? [y/N] "
+            ).strip().lower()
+        if answer != 'y':
+            print("Submission cancelled.")
+            return
+        import tempfile, zipfile, urllib.request
+        _rc, git_email = _git(['config', '--global', 'user.email'], os.getcwd())
+        git_email = git_email.strip()
+        metadata = {
+            'git_email': git_email,
+            'trajectories': results,
+        }
+        with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp:
+            zip_path = tmp.name
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr('metadata.json', json.dumps(metadata, indent=2))
+            for r in results:
+                traj_files = list(claude_dir.glob(f"projects/**/{r['trajectory']}"))
+                if traj_files:
+                    zf.write(str(traj_files[0]), r['trajectory'])
+        print(f"Uploading {len(results)} trajectories ...")
+        zip_data = Path(zip_path).read_bytes()
+        req = urllib.request.Request(
+            'https://www.monperrus.net/martin/transfer-sh.py/trajectories',
+            data=zip_data,
+            method='PUT',
+            headers={
+                'User-Agent': 'reproducible-trajectories',
+                'Content-Length': str(len(zip_data)),
+            },
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            url = resp.read().decode().strip()
+        print(f"Submitted: {url}")
+        print("Thank you for contributing to the KTH experiment on coding agents!")
         return
 
     if args.command == "verify-trajectories":

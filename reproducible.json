@@ -1,0 +1,1105 @@
+[
+  {
+    "cwd": "/home/martin/bin",
+    "trajectory": "160028e9-adfd-49e6-9c18-1bf498d590d4.jsonl",
+    "commit_before": "0b5d93969c6e",
+    "commit_after": "796039758b23",
+    "strategy": "content",
+    "files": [
+      "gitignore-latex.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/bin",
+    "trajectory": "2b6e226b-5934-4d0b-a3b5-4024fdcfcf6b.jsonl",
+    "commit_before": "30822c939e56",
+    "commit_after": "9ff402f98284",
+    "strategy": "timestamp",
+    "files": [
+      "agents-last-sessions.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/bin",
+    "trajectory": "357c786f-4644-4fbd-99af-b580b9b8d9c1.jsonl",
+    "commit_before": "fbb9a34d4f53",
+    "commit_after": "796039758b23",
+    "strategy": "content",
+    "files": [
+      "claude-open-trajectory.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/bin",
+    "trajectory": "3c9c21de-0f8f-4743-b888-1a6c1d1cd78b.jsonl",
+    "commit_before": "4af216f352fe",
+    "commit_after": "796039758b23",
+    "strategy": "content",
+    "files": [
+      "claude-websearch-bare"
+    ]
+  },
+  {
+    "cwd": "/home/martin/bin",
+    "trajectory": "4c3ef768-81c2-4688-9c71-4de5b27761fc.jsonl",
+    "commit_before": "29d008a58cb9",
+    "commit_after": "796039758b23",
+    "strategy": "content",
+    "files": [
+      "find-pypi-pip.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/bin",
+    "trajectory": "516dd792-bc05-4ede-875b-ce0f0a7dc7f3.jsonl",
+    "commit_before": "27c58d2893f4",
+    "commit_after": "796039758b23",
+    "strategy": "content",
+    "files": [
+      "create-revokation-for-gpg-key.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/bin",
+    "trajectory": "546597cc-324c-406b-aa87-578ae627a056.jsonl",
+    "commit_before": "fbb9a34d4f53",
+    "commit_after": "796039758b23",
+    "strategy": "content",
+    "files": [
+      "claude-search-in-trajectory.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/bin",
+    "trajectory": "5e844a90-57f6-40ef-816d-2381aa30fabd.jsonl",
+    "commit_before": "29d008a58cb9",
+    "commit_after": "796039758b23",
+    "strategy": "content",
+    "files": [
+      "paper_search_se.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/bin",
+    "trajectory": "71683538-814c-4e48-8093-a4b4848aca08.jsonl",
+    "commit_before": "9ff402f98284",
+    "commit_after": "3a04a2c5e92e",
+    "strategy": "content",
+    "files": [
+      "agent-anthropic_claude-sonnet-4.6"
+    ]
+  },
+  {
+    "cwd": "/home/martin/bin",
+    "trajectory": "8051c9e0-3d34-4d39-be62-298edeb940c8.jsonl",
+    "commit_before": "e94068033e25",
+    "commit_after": "255e6faaf575",
+    "strategy": "content",
+    "files": [
+      "claude-usage-billing.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/bin",
+    "trajectory": "ad183386-7ac6-4a5b-97ed-4f717f534ec2.jsonl",
+    "commit_before": "8a1528e8627a",
+    "commit_after": "b2702d38de70",
+    "strategy": "content",
+    "files": [
+      "list-automations.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/bin",
+    "trajectory": "b79706ca-5926-4c63-ac2e-ed22b45a70a0.jsonl",
+    "commit_before": "fbb9a34d4f53",
+    "commit_after": "20cf419c432c",
+    "strategy": "content",
+    "files": [
+      "agent-task.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/bin",
+    "trajectory": "e2bbcfe3-0152-457d-8332-bc989466a291.jsonl",
+    "commit_before": "703722605b30",
+    "commit_after": "ad9360db12b6",
+    "strategy": "content",
+    "files": [
+      "lib/agent_workflow/atif.py",
+      "lib/agent_workflow/runner.py",
+      "lib/agent_workflow/profiles.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/bin",
+    "trajectory": "fa24a168-64c1-47e0-8562-8a29088309c2.jsonl",
+    "commit_before": "303bdcb179e0",
+    "commit_after": "4af216f352fe",
+    "strategy": "content",
+    "files": [
+      "backup-overleaf.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/bin/lib/agent_workflow",
+    "trajectory": "5d3b9994-c229-4aed-a008-2acf22623a76.jsonl",
+    "commit_before": null,
+    "commit_after": "831d4e52fe3d",
+    "strategy": "content",
+    "files": [
+      ".gitignore"
+    ]
+  },
+  {
+    "cwd": "/home/martin/martin-no-backup/urlwatch",
+    "trajectory": "6658182a-838f-4574-9289-6984c46df6b3.jsonl",
+    "commit_before": "fb7763e29320",
+    "commit_after": "e5181eb84f12",
+    "strategy": "content",
+    "files": [
+      "lib/urlwatch/jobs.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/aicid.net",
+    "trajectory": "6c10a1a4-0eae-4132-9588-6b8666b3a6a6.jsonl",
+    "commit_before": "a029b8c908ea",
+    "commit_after": "81c4057abf5a",
+    "strategy": "content",
+    "files": [
+      "templates/profile.html",
+      "static/css/style.css",
+      "tests/test_agents.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/aicid.net",
+    "trajectory": "ad2a7908-dc35-458c-96d8-52d5ea891c42.jsonl",
+    "commit_before": "7fb931081d4e",
+    "commit_after": "a59a8ada9f93",
+    "strategy": "content",
+    "files": [
+      "app/schemas/agent.py",
+      "app/routers/public.py",
+      "tests/test_agents.py",
+      "tests/test_works.py",
+      "docs/SKILL.md"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/cv",
+    "trajectory": "5519e782-50d4-467b-9515-a6c81901357b.jsonl",
+    "commit_before": "0a95c3c8abd6",
+    "commit_after": "a3486966b5ac",
+    "strategy": "content",
+    "files": [
+      "CV-Martin-Monperrus-2026-en.tex"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/cv",
+    "trajectory": "5c69687a-1fda-435f-b519-a9402314524f.jsonl",
+    "commit_before": "1bde2012af69",
+    "commit_after": "abdb2d18b0bd",
+    "strategy": "content",
+    "files": [
+      "CV-Martin-Monperrus-2026-en-2-pages-short-WASP-NEST-AI.tex"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/gakomail",
+    "trajectory": "69ff66b3-e536-4384-8dc3-264c7b5b4c3d.jsonl",
+    "commit_before": "ac26560a288b",
+    "commit_after": "c48afea7e909",
+    "strategy": "content",
+    "files": [
+      ".github/workflows/pypi-publish.yml"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/overleaf_backup/685c787efe5d23cdc0c8da41",
+    "trajectory": "b44ad7da-110a-47d4-996f-b5b4ea2fd86f.jsonl",
+    "commit_before": "491eac974740",
+    "commit_after": "f12abb44ba22",
+    "strategy": "content",
+    "files": [
+      "response.tex"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/overleaf_backup/695fdf69906aaefbbd8ad226",
+    "trajectory": "0c48577d-5107-4cfa-8cbc-433c17c1812b.jsonl",
+    "commit_before": "304fdf228e90",
+    "commit_after": "a695c5699b8b",
+    "strategy": "content",
+    "files": [
+      "budget.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/overleaf_backup/695fdf69906aaefbbd8ad226",
+    "trajectory": "e7c3dd80-efa3-4412-b89d-17d2176d95d3.jsonl",
+    "commit_before": "ba33539d05f8",
+    "commit_after": "d9ffc75346b6",
+    "strategy": "content",
+    "files": [
+      "main.tex"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/papers/paper-dead-code-review",
+    "trajectory": "042d7be9-6d83-4a3b-b928-0d7236a25080.jsonl",
+    "commit_before": "4bfdada07dfc",
+    "commit_after": "544b4ed2e332",
+    "strategy": "content",
+    "files": [
+      "argument_map.html"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/agent_benchmark",
+    "trajectory": "178b560d-4502-48da-9ccf-56d867bee565.jsonl",
+    "commit_before": "af6cc598f997",
+    "commit_after": "2fb19aad62d3",
+    "strategy": "content",
+    "files": [
+      "benchmark.py",
+      "migrate_results.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/agent_benchmark",
+    "trajectory": "185132b1-21f9-4b08-872f-6a7654acecac.jsonl",
+    "commit_before": "26fdefa2ff1f",
+    "commit_after": "90b4ed57394b",
+    "strategy": "content",
+    "files": [
+      "tool_call_analysis.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/agent_benchmark",
+    "trajectory": "41281885-af6a-493d-9a69-083c20a417e8.jsonl",
+    "commit_before": "d568bc55ef96",
+    "commit_after": "18eb0dc8b044",
+    "strategy": "content",
+    "files": [
+      "benchmark.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/agent_benchmark",
+    "trajectory": "8f362879-994b-4b60-a021-5852d0d63f84.jsonl",
+    "commit_before": "fe41050101d1",
+    "commit_after": "2e6c65af4daf",
+    "strategy": "content",
+    "files": [
+      "benchmark.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/agent_benchmark",
+    "trajectory": "b595d994-b1ff-473d-982a-f5fc44ad1b13.jsonl",
+    "commit_before": "e074c9942249",
+    "commit_after": "a7cce08fbf78",
+    "strategy": "content",
+    "files": [
+      "results_matrix.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/ai-review-proposals",
+    "trajectory": "d5f53667-5e08-4c25-8cff-87a00b335654.jsonl",
+    "commit_before": null,
+    "commit_after": "321175634065",
+    "strategy": "timestamp",
+    "files": [
+      "index.html"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/arxiv-contributor-increase",
+    "trajectory": "a1caa7aa-8f17-4fa0-9580-e9f54aaedb9f.jsonl",
+    "commit_before": "07b89538cd69",
+    "commit_after": "4b9b035d2150",
+    "strategy": "content",
+    "files": [
+      "README.md"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/arxiv-endorsement",
+    "trajectory": "15cae4ab-7c68-44fd-ba24-74707a97a980.jsonl",
+    "commit_before": "b2f8acab9f83",
+    "commit_after": "8d91798c26ab",
+    "strategy": "content",
+    "files": [
+      "check-paper.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/browser-remote-debugging",
+    "trajectory": "006da7b2-85dd-4164-bdac-ea38aca01e8a.jsonl",
+    "commit_before": "1549c16d3630",
+    "commit_after": "6684d08c3ffc",
+    "strategy": "content",
+    "files": [
+      "SKILL.md",
+      "demo-network-intercept.py",
+      "intercept-acm.py",
+      "intercept-acm2.py",
+      "ACM.md"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/checklist-publish-pypi",
+    "trajectory": "3d79dfa0-be78-468c-b9dc-6af07df6f398.jsonl",
+    "commit_before": "70767984f483",
+    "commit_after": "672314e7d1a0",
+    "strategy": "content",
+    "files": [
+      "workspace/prototypes/checklist-publish-pypi/checklist-pypi.md",
+      "workspace/prototypes/checklist-publish-pypi/check.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/manuscriptcentral-api",
+    "trajectory": "27a1335c-81ac-4c79-8db6-f979004c0264.jsonl",
+    "commit_before": "765dc642f74f",
+    "commit_after": "c3eb3ec617eb",
+    "strategy": "content",
+    "files": [
+      "mc_repl.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/manuscriptcentral-api",
+    "trajectory": "396da2d1-bc99-4b9a-ac78-745eca2c9ebb.jsonl",
+    "commit_before": "aba67b86183e",
+    "commit_after": "f48cfe103781",
+    "strategy": "content",
+    "files": [
+      "mc_repl.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/modelstream.ai",
+    "trajectory": "56657b51-c1d6-4814-9d46-6c087ef22815.jsonl",
+    "commit_before": null,
+    "commit_after": "c427e67359e3",
+    "strategy": "content",
+    "files": [
+      "demo_inference.py",
+      "README.md"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/probe-model-tools",
+    "trajectory": "3e9617d9-cd0a-44b5-87cc-b929c03178c2.jsonl",
+    "commit_before": "debc9837536c",
+    "commit_after": "0ab8b80b421f",
+    "strategy": "content",
+    "files": [
+      "rename_schemas.py",
+      "test_agents.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/probe-model-tools",
+    "trajectory": "3f00185b-6550-42ed-9a57-7c8dbf8a3e04.jsonl",
+    "commit_before": "aa01dfd8c625",
+    "commit_after": "7ef1ba9eef31",
+    "strategy": "content",
+    "files": [
+      "agent-z-ai_glm-4.7.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/probe-model-tools",
+    "trajectory": "47d65ab5-50eb-47f3-b53a-ce86a769ab28.jsonl",
+    "commit_before": "89498c87e6e0",
+    "commit_after": "7e5361a70e84",
+    "strategy": "content",
+    "files": [
+      "tool_library.py",
+      "agent_probe.py",
+      "test_tool_library.py",
+      "probe_model_tool_calls.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/probe-model-tools",
+    "trajectory": "5d212a8b-5661-4242-86b5-2185a1f7bf01.jsonl",
+    "commit_before": "bd42cc624877",
+    "commit_after": "e0c78afe5a75",
+    "strategy": "content",
+    "files": [
+      "agent_probe.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/probe-model-tools",
+    "trajectory": "60b3867b-568c-4d78-b08f-32521b502e61.jsonl",
+    "commit_before": "019d39abff6f",
+    "commit_after": "821116969327",
+    "strategy": "content",
+    "files": [
+      "agent_probe.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/probe-model-tools",
+    "trajectory": "78278b26-c5eb-4568-aac6-2bb6261fb482.jsonl",
+    "commit_before": "7e5361a70e84",
+    "commit_after": "98681fcee924",
+    "strategy": "content",
+    "files": [
+      "probe_model_tool_calls.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/probe-model-tools",
+    "trajectory": "8028e88b-31d3-4f6a-954a-d9276f3bd62e.jsonl",
+    "commit_before": "c18dd2a87d09",
+    "commit_after": "7962b355da37",
+    "strategy": "content",
+    "files": [
+      "probe_model_tool_calls.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/probe-model-tools",
+    "trajectory": "d51f4c89-b5b2-4211-9a33-b858e0a7f834.jsonl",
+    "commit_before": "2d7331df0d77",
+    "commit_after": "0d2ff1dbf121",
+    "strategy": "content",
+    "files": [
+      "xml-toolcall.md"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/probe-model-tools",
+    "trajectory": "ea55f8df-1b7b-4d1e-86f0-00544fd16d7d.jsonl",
+    "commit_before": "dfdcd7907d82",
+    "commit_after": "a77d1b206740",
+    "strategy": "content",
+    "files": [
+      "openrouter_key.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/probe-model-tools",
+    "trajectory": "f4b5ff67-ab6b-4ab6-989f-e7113f27936c.jsonl",
+    "commit_before": "7ef1ba9eef31",
+    "commit_after": "961b7a63871f",
+    "strategy": "content",
+    "files": [
+      "backfill_provider_api_support.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/pseudo-code",
+    "trajectory": "2c9a5069-3e28-45e5-89b9-8aa0608d8d5d.jsonl",
+    "commit_before": "3f90b1572721",
+    "commit_after": "7029d0f5824f",
+    "strategy": "content",
+    "files": [
+      "README.md"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/pseudo-code",
+    "trajectory": "511a8018-42b7-48f7-aea2-c7640ba1d0ff.jsonl",
+    "commit_before": "89a229ff6c13",
+    "commit_after": "e5d53d63fc93",
+    "strategy": "content",
+    "files": [
+      "citation_code_smell.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/researcher-email-database",
+    "trajectory": "fd4387cc-e770-4124-a17b-9f8b01f42686.jsonl",
+    "commit_before": "ee2819f7ac7b",
+    "commit_after": "a96729792c62",
+    "strategy": "content",
+    "files": [
+      "researcher-email-db.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/review-debt",
+    "trajectory": "0ebcaedd-8cc3-4882-9516-e72e7880d680.jsonl",
+    "commit_before": null,
+    "commit_after": "a373f3154fbc",
+    "strategy": "content",
+    "files": [
+      "compute-review-debt.py",
+      "README.md"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/review-debt",
+    "trajectory": "9356766b-c4ad-4633-a4f1-b6083866e9ef.jsonl",
+    "commit_before": "a373f3154fbc",
+    "commit_after": "acb60b7802f6",
+    "strategy": "content",
+    "files": [
+      "compute-review-debt.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/socks-rotating-proxy-account",
+    "trajectory": "57902901-e809-4869-a436-61584602165b.jsonl",
+    "commit_before": "24be6bf39b86",
+    "commit_after": "ade79ae5bfe6",
+    "strategy": "content",
+    "files": [
+      "rotating_proxy.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/substack-api",
+    "trajectory": "07d4c857-3105-42bb-bf99-fbf9496a3005.jsonl",
+    "commit_before": null,
+    "commit_after": "fd72cf4136ac",
+    "strategy": "content",
+    "files": [
+      "substack_api.py",
+      "substack_post.py",
+      ".gitignore"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/supabase-cqudsqhlchxoqcswxpol",
+    "trajectory": "agent-a37370e7530cde069.jsonl",
+    "commit_before": "4645961755de",
+    "commit_after": "381ccf516928",
+    "strategy": "content",
+    "files": [
+      "supabase/functions/todo-mcp-server/index.ts"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/supabase-cqudsqhlchxoqcswxpol",
+    "trajectory": "a478466f-b50a-4442-8e52-ed5971f898a4.jsonl",
+    "commit_before": "be634d69a8a3",
+    "commit_after": "3b7c66d46a38",
+    "strategy": "content",
+    "files": [
+      ".github/workflows/deploy-supabase-functions.yml"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/supabase-cqudsqhlchxoqcswxpol",
+    "trajectory": "aec16812-c632-406a-90ce-502778f5c2de.jsonl",
+    "commit_before": "542abdea3b69",
+    "commit_after": "be634d69a8a3",
+    "strategy": "content",
+    "files": [
+      "supabase/functions/todo-mcp-server/index.ts"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/supabase-cqudsqhlchxoqcswxpol",
+    "trajectory": "c06e7839-f9b2-400e-9061-3ad56ba1d868.jsonl",
+    "commit_before": "6cfc6555bdee",
+    "commit_after": "93190661a676",
+    "strategy": "content",
+    "files": [
+      "tests/integration.test.ts",
+      "deno.json",
+      ".github/workflows/deploy-supabase-functions.yml",
+      "supabase/config.toml",
+      "README.md",
+      "supabase/migrations/20260506200000_drop_user_id_fkey.sql"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/terminator-custom-command",
+    "trajectory": "91fad226-6dee-4899-b7c5-59af96748039.jsonl",
+    "commit_before": "9f11fb574f10",
+    "commit_after": "20b58a735f49",
+    "strategy": "content",
+    "files": [
+      "terminator-shell",
+      "tmux.conf",
+      "bash-init.sh",
+      "set-status.sh",
+      "README.md"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/tmp",
+    "trajectory": "81886744-751a-4e8a-88ee-e98532ad1d20.jsonl",
+    "commit_before": null,
+    "commit_after": "ccb7442dae2f",
+    "strategy": "content",
+    "files": [
+      "giveth-bug-report.md"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/tmp",
+    "trajectory": "b9f61d86-3997-4eb6-bf90-63df5bda2b12.jsonl",
+    "commit_before": "ccb7442dae2f",
+    "commit_after": "7af111ce805d",
+    "strategy": "content",
+    "files": [
+      "Metascience in the age of AI.tex"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/todo-ui",
+    "trajectory": "c21bd4e9-b50f-4216-9fd8-12d64aea6288.jsonl",
+    "commit_before": "32543591dcd9",
+    "commit_after": "77b08b0403ca",
+    "strategy": "content",
+    "files": [
+      "index.html"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/verify-commit-signatures-on-github",
+    "trajectory": "ede5110a-e51e-432a-a8ee-f596b5b04e96.jsonl",
+    "commit_before": null,
+    "commit_after": "bf6a3d578987",
+    "strategy": "content",
+    "files": [
+      "verify-key-on-rekor.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "006c9d85-76f2-4e7d-9d5f-f4c7cb406b69.jsonl",
+    "commit_before": "0180709544d1",
+    "commit_after": "b4fc00cfe480",
+    "strategy": "content",
+    "files": [
+      "citation-Automatic_bug_fixing-2026-05-17T00:00:00Z.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "177d75c4-aebf-48f8-917a-36ed0d6ae4c1.jsonl",
+    "commit_before": "e88f09273fd4",
+    "commit_after": "b4fc00cfe480",
+    "strategy": "content",
+    "files": [
+      "citation-Unit_testing-2026-05-25T12:00:00Z.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "23f641d5-2c41-4876-8545-e205802db6f0.jsonl",
+    "commit_before": "9f26334d5f84",
+    "commit_after": "cef15be5d9c2",
+    "strategy": "content",
+    "files": [
+      "edit-Cleanroom_software_engineering-2026-05-30T00:00:00Z.json",
+      "edit-Continuous_integration-2026-05-30T00:00:00Z.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "2a653185-4865-487a-9551-999536cb95d5.jsonl",
+    "commit_before": "0180709544d1",
+    "commit_after": "b4fc00cfe480",
+    "strategy": "content",
+    "files": [
+      "citation-Unit_Testing-2026-05-16T04:37:27Z.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "343c0034-269c-4c35-8855-c523757a563e.jsonl",
+    "commit_before": "d005eb6f665a",
+    "commit_after": "38b21035a404",
+    "strategy": "content",
+    "files": [
+      "add-citation-software-analytics-software-maps.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "37edcd56-5544-428e-ac0e-959bac6f662c.jsonl",
+    "commit_before": "bd066db356cf",
+    "commit_after": "1005acef116c",
+    "strategy": "content",
+    "files": [
+      "wikipedia-cli.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "3dba7e76-8651-49cc-80eb-549b80cb06b2.jsonl",
+    "commit_before": "28236b9f4505",
+    "commit_after": "b4fc00cfe480",
+    "strategy": "content",
+    "files": [
+      "citation-Automatic_bug_fixing-astor-2026-05-19.json",
+      "rename-usage-to-sbom-2026-05-19.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "47c91f10-486a-41ff-9cd5-80a03910a2d1.jsonl",
+    "commit_before": "448fac2bc1be",
+    "commit_after": "bda32d65b2df",
+    "strategy": "content",
+    "files": [
+      "add-citation-automatic-bug-fixing-dynamoth.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "56975a92-7d56-4b6d-8dab-c7b17ed7e08b.jsonl",
+    "commit_before": "0180709544d1",
+    "commit_after": "b4fc00cfe480",
+    "strategy": "content",
+    "files": [
+      "citation-Free_software-2026-05-17T080922Z.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "5711dcc5-b31e-437d-a9e1-a7adb7263c8d.jsonl",
+    "commit_before": "617cbf50ee36",
+    "commit_after": "9865c8a205b1",
+    "strategy": "content",
+    "files": [
+      "citation-Software_supply_chain-package-registry-attacks-2026-05-28.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "67cc3553-ab7f-452f-943b-0e087374c883.jsonl",
+    "commit_before": "12f5940819f7",
+    "commit_after": "59d841e9fccb",
+    "strategy": "content",
+    "files": [
+      "citation-Self-supervised_learning-SelfAPR-2026-05-28T00:00:00Z.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "7eed6b0d-8c65-4665-b9d4-e5cba15f1c00.jsonl",
+    "commit_before": "e88f09273fd4",
+    "commit_after": "b4fc00cfe480",
+    "strategy": "content",
+    "files": [
+      "citation-repair-models-sbse.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "872c24bd-00b6-4e77-b90d-762312516bdc.jsonl",
+    "commit_before": "22597c2acdfa",
+    "commit_after": "9a4ca8cc88d6",
+    "strategy": "content",
+    "files": [
+      "find-citation-needed-software-engineering.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "9602d2e4-636f-4186-9b94-6b147cbac6db.jsonl",
+    "commit_before": "28236b9f4505",
+    "commit_after": "b4fc00cfe480",
+    "strategy": "content",
+    "files": [
+      "citation-Software_design_pattern-2026-05-19T18:43:03Z.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "9fa54d93-8daa-4e8f-b69a-73d03d1a45ab.jsonl",
+    "commit_before": "1005acef116c",
+    "commit_after": "d020585d1899",
+    "strategy": "content",
+    "files": [
+      "wikipedia-cli.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "a22c0cd1-2ce1-4da8-b4a3-ac638e67fa6e.jsonl",
+    "commit_before": "123c1e378920",
+    "commit_after": "28236b9f4505",
+    "strategy": "content",
+    "files": [
+      "wikipedia_cli.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "a8427b03-b166-45b8-93ed-0a677a20fbf6.jsonl",
+    "commit_before": "e88f09273fd4",
+    "commit_after": "b4fc00cfe480",
+    "strategy": "content",
+    "files": [
+      "citation-Code_coverage-2026-05-20T00:00:00Z.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "bae301ee-a8b2-449d-835a-13934df5dea1.jsonl",
+    "commit_before": "e578a972c903",
+    "commit_after": "617cbf50ee36",
+    "strategy": "content",
+    "files": [
+      "citation-Automatic_bug_fixing-2026-05-28T19:41:51Z.json",
+      "citation-Automatic_bug_fixing-2026-05-28T19:45:00Z.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "c3e05a0a-0353-4721-8f89-687616e78400.jsonl",
+    "commit_before": "dafe3010757a",
+    "commit_after": "e691e97d93fd",
+    "strategy": "timestamp",
+    "files": [
+      "wikipedia_cli.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "d289a846-2fe6-42ef-854f-72e3b4afc533.jsonl",
+    "commit_before": "e88f09273fd4",
+    "commit_after": "b4fc00cfe480",
+    "strategy": "content",
+    "files": [
+      "citation-repair-models.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "d44374b8-634c-4994-9973-6e7af2526e55.jsonl",
+    "commit_before": "30ba4ca168ed",
+    "commit_after": "88c72899e831",
+    "strategy": "content",
+    "files": [
+      "find-typo.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "db971da6-12f1-444a-b279-494c9c022aea.jsonl",
+    "commit_before": "0180709544d1",
+    "commit_after": "b4fc00cfe480",
+    "strategy": "content",
+    "files": [
+      "supply-chain-provenance-addition.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "dcfae024-5814-4c48-b4da-d7c8b1352dbb.jsonl",
+    "commit_before": "e88f09273fd4",
+    "commit_after": "b4fc00cfe480",
+    "strategy": "content",
+    "files": [
+      "citation-Automatic_bug_fixing-2026-05-19.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "e1537180-bb23-4bce-ba5c-4e7a5020881e.jsonl",
+    "commit_before": "f973fa52c6dc",
+    "commit_after": "6507a93c0815",
+    "strategy": "content",
+    "files": [
+      "wikipedia_cli.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "agent-a58d6b7091fe9ad37.jsonl",
+    "commit_before": "51876ed43dc4",
+    "commit_after": "67d4fa954209",
+    "strategy": "content",
+    "files": [
+      "citation-Code_smell-Shotgun_Surgery-2026-05-30T00:00:00Z.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "agent-a5f065e4dff3ecb65.jsonl",
+    "commit_before": "51876ed43dc4",
+    "commit_after": "67d4fa954209",
+    "strategy": "content",
+    "files": [
+      "citation-Continuous_integration-daily_build-2026-05-30.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "agent-a6655265e92eabfe5.jsonl",
+    "commit_before": "51876ed43dc4",
+    "commit_after": "67d4fa954209",
+    "strategy": "content",
+    "files": [
+      "citation-Cyclomatic_complexity-2026-05-30T00:00:00Z.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "agent-a67ba05dbdacb59dc.jsonl",
+    "commit_before": "51876ed43dc4",
+    "commit_after": "67d4fa954209",
+    "strategy": "content",
+    "files": [
+      "citation-Duplicate_code-2026-05-30.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "agent-a7095aec4a0ec6b05.jsonl",
+    "commit_before": "51876ed43dc4",
+    "commit_after": "67d4fa954209",
+    "strategy": "content",
+    "files": [
+      "citation-Program_slicing-2026-05-30T00:00:00Z.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "agent-a73043699ec0a7d28.jsonl",
+    "commit_before": "51876ed43dc4",
+    "commit_after": "03d4497c9f97",
+    "strategy": "content",
+    "files": [
+      "citation-Mutation_testing-2026-05-30T00:00:00Z.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "agent-a73647d8823e6909f.jsonl",
+    "commit_before": "51876ed43dc4",
+    "commit_after": "67d4fa954209",
+    "strategy": "content",
+    "files": [
+      "citation-Software_metric-2026-05-30T00:00:00Z.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "agent-af5ecad1a472b800c.jsonl",
+    "commit_before": "51876ed43dc4",
+    "commit_after": "67d4fa954209",
+    "strategy": "content",
+    "files": [
+      "citation-Fuzzing-2026-05-30T00:00:00Z.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "agent-afcb23436f529573f.jsonl",
+    "commit_before": "51876ed43dc4",
+    "commit_after": "67d4fa954209",
+    "strategy": "content",
+    "files": [
+      "citation-Dynamic_program_analysis-2026-05-30.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "e8de24e1-db3a-4733-a4bf-9aea6b68770b.jsonl",
+    "commit_before": "12f5940819f7",
+    "commit_after": "617cbf50ee36",
+    "strategy": "content",
+    "files": [
+      "citation-Software_supply_chain-2026-05-28T00:00:00Z.json"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "ee09c5ba-b983-4a0c-a230-6ab2368d5734.jsonl",
+    "commit_before": "a9745c0f95e2",
+    "commit_after": "b4fc00cfe480",
+    "strategy": "content",
+    "files": [
+      "list-scholars-without-wikipedia.py",
+      "drafts-creation/Luc_Van_Gool.wiki",
+      "drafts-creation/Eamonn_Keogh.wiki",
+      "drafts-creation/Somesh_Jha.wiki",
+      "drafts-creation/Wenke_Lee.wiki",
+      "drafts-creation/Tony_Lindeberg.wiki",
+      "drafts-creation/Hannes_Hartenstein.wiki",
+      "drafts-creation/Michael_D._Ernst.wiki",
+      "drafts-creation/Patrice_Godefroid.wiki",
+      "drafts-creation/Andreas_Zeller.wiki",
+      "drafts-creation/Nicolas_Halbwachs.wiki",
+      "drafts-creation/Matteo_Frigo.wiki",
+      "drafts-creation/Olivier_Cappe.wiki",
+      "drafts-creation/Jim_Herbsleb.wiki",
+      "drafts-creation/Earl_T._Barr.wiki",
+      "drafts-creation/Per_Runeson.wiki",
+      "drafts-creation/Cristian_Cadar.wiki",
+      "drafts-creation/Algirdas_Avizienis.wiki"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "f3641aee-8434-4258-91ad-165acaa9af9f.jsonl",
+    "commit_before": "d005eb6f665a",
+    "commit_after": "38b21035a404",
+    "strategy": "content",
+    "files": [
+      "add-citation-data-migration-browser-automation.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/wikipedia-experiment",
+    "trajectory": "f9a4b667-2fb2-4eb9-8a45-6390736fe9f2.jsonl",
+    "commit_before": "4ca48df1053b",
+    "commit_after": "1e388a548b39",
+    "strategy": "content",
+    "files": [
+      "find-uncited-claims.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/prototypes/xterm-bigger",
+    "trajectory": "3ca62acc-7e8f-4f18-b1b8-037ea1e88e7f.jsonl",
+    "commit_before": "9ab2f30af761",
+    "commit_after": "ec05f688f518",
+    "strategy": "content",
+    "files": [
+      "xterm-bigger",
+      "xterm.Xresources"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/scholar-harvest",
+    "trajectory": "b591b8de-46fe-4639-b839-8a596d6702d3.jsonl",
+    "commit_before": "52d15ba97735",
+    "commit_after": "f7b5494a04cb",
+    "strategy": "content",
+    "files": [
+      "harvest.py",
+      "test_researchsquare.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/scholar-harvest",
+    "trajectory": "c7f0ab9f-83dc-4881-8603-fa0f2cf18611.jsonl",
+    "commit_before": "ca868bcbbc14",
+    "commit_after": "52d15ba97735",
+    "strategy": "content",
+    "files": [
+      "dl_monperrus_paper.py"
+    ]
+  },
+  {
+    "cwd": "/home/martin/workspace/usemajordomo_worktrees/usemajordomo_com",
+    "trajectory": "f1ac7547-1185-4f2c-a85f-c1277991026a.jsonl",
+    "commit_before": "4232ffed2dda",
+    "commit_after": "ff3fafb84511",
+    "strategy": "content",
+    "files": [
+      "production_scripts/monitor_production.py"
+    ]
+  }
+]
