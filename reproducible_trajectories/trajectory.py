@@ -1803,7 +1803,6 @@ def main(argv=None):
         action="store_true",
         help="Auto-confirm submission to the server",
     )
-
     args = parser.parse_args(argv)
     claude_dir = Path(args.claude_dir or Path.home() / ".claude") if hasattr(args, "claude_dir") else Path.home() / ".claude"
 
@@ -1934,7 +1933,6 @@ def main(argv=None):
                 window_hours=args.window_hours,
             )
             traj_lookup = lambda r: [copilot_dir / 'session-state' / r['trajectory'] / 'events.jsonl']
-
         if args.output:
             Path(args.output).write_text(json.dumps(results, indent=2))
             print(f"Wrote {len(results)} entries to {args.output}")
