@@ -1622,7 +1622,8 @@ _COLLECTION_HOOK_MARKER = '# reproducible-trajectories collection hook'
 
 def _install_collection_webhook(repo_paths):
     """Add/update a pre-commit git hook in each repo that shares trajectories."""
-    hook_body = 'pre-commit-collect-trajectories\n'
+    binary = shutil.which('pre-commit-collect-trajectories') or 'pre-commit-collect-trajectories'
+    hook_body = f'{binary}\n'
     installed = 0
     for repo_path in repo_paths:
         hook_path = Path(repo_path) / '.git' / 'hooks' / 'pre-commit'
