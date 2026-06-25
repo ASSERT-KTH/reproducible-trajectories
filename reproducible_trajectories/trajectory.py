@@ -19,6 +19,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import trajectoriz as tz
+
 try:
     from . import pi_trajectory
 except ImportError:  # pragma: no cover - allows direct script execution
@@ -72,9 +74,14 @@ def build_sequence(events):
 def resolve_trajectory_path(trajectory_arg, claude_dir):
     if os.path.exists(trajectory_arg):
         return trajectory_arg
-    matches = list(Path(claude_dir).glob(f"projects/**/{trajectory_arg}.jsonl"))
-    if matches:
-        return str(matches[0])
+    for iterator in (
+        tz.iter_claude_trajectories(claude_dir),
+        tz.iter_pi_trajectories(),
+        tz.iter_codex_trajectories(),
+    ):
+        for path in iterator:
+            if path.stem == trajectory_arg or trajectory_arg in path.name:
+                return str(path)
     pi_match = pi_trajectory.resolve_session_path(trajectory_arg)
     if pi_match:
         return pi_match
@@ -443,7 +450,7 @@ _TRAJECTORY_TAG_RE = re.compile(r"<trajectory>([^<]+)</trajectory>", re.I)
 
 
 def _uuid_exists(uuid, claude_dir):
-    return bool(list(Path(claude_dir).glob(f"projects/**/{uuid}.jsonl")))
+    return any(path.stem == uuid for path in tz.iter_claude_trajectories(claude_dir))
 
 
 def _validate_identifier(identifier, claude_dir):
@@ -851,7 +858,7 @@ def find_reproducible_trajectories_claude(claude_dir=None, window_hours=24):
     timelines = {}
     results = []
 
-    for jsonl in sorted(claude_dir.glob('projects/**/*.jsonl')):
+    for jsonl in tz.iter_claude_trajectories(claude_dir):
         try:
             events = parse_trajectory(str(jsonl))
         except (OSError, json.JSONDecodeError):
@@ -1072,7 +1079,7 @@ def find_reproducible_trajectories_copilot(copilot_dir=None, window_hours=24):
     timelines = {}
     results = []
 
-    for events_path in sorted(copilot_dir.glob('session-state/*/events.jsonl')):
+    for events_path in tz.iter_copilot_event_trajectories(copilot_dir):
         info = _parse_copilot_session(events_path)
         if info is None:
             continue
@@ -1332,31 +1339,6 @@ def _public_github_repo_url(repo_root, public_cache):
     return None
 
 
-def _get_codex_session_info(events):
-    """
-    Extract (session_id, cwd) from OpenAI Codex CLI session events.
-
-    Codex sessions include a metadata object with a 'cwd' field, typically
-    the first event in the JSONL file. Only events that look like session
-    metadata (i.e. contain 'cwd' but no 'role' field used by chat messages)
-    are considered.
-    """
-    for e in events:
-        if not isinstance(e, dict):
-            continue
-        if e.get('type') == 'session_meta':
-            payload = e.get('payload') or {}
-            if payload.get('cwd'):
-                return payload.get('id') or payload.get('session_id'), payload['cwd']
-        # Chat messages (user/assistant/tool) carry a 'role' field — skip them.
-        # Session metadata events have 'cwd' but no 'role'.
-        if e.get('role'):
-            continue
-        if e.get('cwd'):
-            return e.get('id') or e.get('session_id'), e['cwd']
-    return None, None
-
-
 def _normalize_codex_tool_call(name, raw_input, session_cwd):
     """Return (absolute_path, tool_name, input_dict) for a Codex edit call."""
     if name == 'write_file':
@@ -1514,7 +1496,7 @@ def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=
         groups[key]['edited_files'].update(modifications.keys())
 
     # --- Claude Code trajectories ---
-    for traj_path in sorted(claude_dir.glob('projects/**/*.jsonl')):
+    for traj_path in tz.iter_claude_trajectories(claude_dir):
         try:
             events = parse_trajectory(str(traj_path))
         except (json.JSONDecodeError, OSError):
@@ -1524,7 +1506,7 @@ def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=
         _process_modifications(traj_path, modifications)
 
     # --- pi trajectories ---
-    for traj_path in pi_trajectory.iter_session_paths():
+    for traj_path in tz.iter_pi_trajectories():
         try:
             events = parse_trajectory(str(traj_path))
         except (json.JSONDecodeError, OSError):
@@ -1534,7 +1516,7 @@ def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=
         _process_modifications(traj_path, modifications)
 
     # --- Codex CLI trajectories ---
-    for traj_path in sorted(codex_dir.glob('sessions/**/*.jsonl')):
+    for traj_path in tz.iter_codex_trajectories(codex_dir):
         try:
             events = []
             with open(traj_path) as f:
@@ -1544,7 +1526,7 @@ def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=
                         events.append(json.loads(line))
         except (json.JSONDecodeError, OSError):
             continue
-        _, session_cwd = _get_codex_session_info(events)
+        session_cwd = tz.get_cwd_from_trajectory(traj_path) or None
         modifications = _collect_codex_modifications(events, session_cwd)
         _process_modifications(traj_path, modifications)
 
@@ -1937,7 +1919,14 @@ def main(argv=None):
                 claude_dir=str(claude_dir),
                 window_hours=args.window_hours,
             )
-            traj_lookup = lambda r: list(claude_dir.glob(f"projects/**/{r['trajectory']}"))
+            traj_lookup = lambda r: [
+                Path(
+                    resolve_trajectory_path(
+                        r['trajectory'][:-6] if r['trajectory'].endswith('.jsonl') else r['trajectory'],
+                        str(claude_dir),
+                    )
+                )
+            ]
         else:
             copilot_dir = Path(args.copilot_dir or Path.home() / '.copilot')
             results = find_reproducible_trajectories_copilot(
