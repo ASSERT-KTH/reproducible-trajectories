@@ -16,7 +16,10 @@ import shutil
 import subprocess
 import sys
 from collections import defaultdict
+from datetime import datetime, timedelta
 from pathlib import Path
+
+import trajectoriz as tz
 
 try:
     from . import pi_trajectory
@@ -71,9 +74,14 @@ def build_sequence(events):
 def resolve_trajectory_path(trajectory_arg, claude_dir):
     if os.path.exists(trajectory_arg):
         return trajectory_arg
-    matches = list(Path(claude_dir).glob(f"projects/**/{trajectory_arg}.jsonl"))
-    if matches:
-        return str(matches[0])
+    for iterator in (
+        tz.iter_claude_trajectories(claude_dir),
+        tz.iter_pi_trajectories(),
+        tz.iter_codex_trajectories(),
+    ):
+        for path in iterator:
+            if path.stem == trajectory_arg or trajectory_arg in path.name:
+                return str(path)
     pi_match = pi_trajectory.resolve_session_path(trajectory_arg)
     if pi_match:
         return pi_match
@@ -442,7 +450,7 @@ _TRAJECTORY_TAG_RE = re.compile(r"<trajectory>([^<]+)</trajectory>", re.I)
 
 
 def _uuid_exists(uuid, claude_dir):
-    return bool(list(Path(claude_dir).glob(f"projects/**/{uuid}.jsonl")))
+    return any(path.stem == uuid for path in tz.iter_claude_trajectories(claude_dir))
 
 
 def _validate_identifier(identifier, claude_dir):
@@ -748,6 +756,438 @@ def verify_trajectories(repo_path, claude_dir=None):
 
 
 # ---------------------------------------------------------------------------
+# find-reproducible-trajectories-claude (and future variants)
+# ---------------------------------------------------------------------------
+
+def _parse_iso(ts):
+    return datetime.fromisoformat(ts.replace('Z', '+00:00'))
+
+
+def _get_commit_timeline(repo_root):
+    """Return sorted list of (datetime, hash) for all commits across all refs."""
+    rc, out = _git(['log', '--format=%H %aI', '--all'], repo_root)
+    if rc != 0:
+        return []
+    commits = []
+    for line in out.strip().splitlines():
+        h, _, ts = line.partition(' ')
+        if h and ts:
+            try:
+                commits.append((_parse_iso(ts), h))
+            except ValueError:
+                pass
+    commits.sort()
+    return commits
+
+
+def _commit_time(repo_root, commit):
+    rc, out = _git(['log', '-1', '--format=%aI', commit], repo_root)
+    if rc != 0:
+        return None
+    try:
+        return _parse_iso(out.strip())
+    except ValueError:
+        return None
+
+
+def _end_commit_by_content(repo_root, rels, simulated, traj_end):
+    """
+    Search commits that touched each file; return the one whose content matches
+    the simulated output, choosing the commit closest to traj_end when multiple
+    candidates exist.  Only considers commits at or after traj_end - 10 min.
+    """
+    earliest = traj_end - timedelta(minutes=10)
+    candidates = {}  # hash -> (datetime, match_count)
+    for fp, rel in rels.items():
+        expected = simulated.get(fp)
+        if expected is None:
+            continue
+        rc, out = _git(['log', '--all', '--format=%H %aI', '--', rel], repo_root)
+        if rc != 0:
+            continue
+        for line in out.strip().splitlines():
+            h, _, ts_str = line.partition(' ')
+            if not h or not ts_str:
+                continue
+            try:
+                dt = _parse_iso(ts_str)
+            except ValueError:
+                continue
+            if dt < earliest:
+                continue
+            actual = _file_at(repo_root, h, rel)
+            if actual == expected:
+                if h not in candidates:
+                    candidates[h] = (dt, 0)
+                candidates[h] = (dt, candidates[h][1] + 1)
+    if not candidates:
+        return None
+    ranked = sorted(
+        candidates.items(),
+        key=lambda kv: (-kv[1][1], abs((kv[1][0] - traj_end).total_seconds())),
+    )
+    return ranked[0][0]
+
+
+def _end_commit_by_time(commits, traj_end, window_hours=24):
+    """Fallback: earliest commit within [traj_end, traj_end + window_hours]."""
+    limit = traj_end + timedelta(hours=window_hours)
+    for dt, h in commits:
+        if traj_end <= dt <= limit:
+            return h
+    return None
+
+
+def find_reproducible_trajectories_claude(claude_dir=None, window_hours=24):
+    """
+    Scan all Claude Code trajectories in claude_dir/projects/ and return those
+    whose Write/Edit ops reproduce the file state at the nearest commit after
+    the trajectory.
+
+    End-commit discovery order:
+      1. Content match: find a commit where the written file content matches.
+      2. Timestamp fallback: first commit within window_hours after trajectory end.
+
+    Returns list of dicts: {cwd, trajectory, commit_before, commit_after,
+                             strategy, files}
+    """
+    if claude_dir is None:
+        claude_dir = Path.home() / '.claude'
+    claude_dir = Path(claude_dir)
+
+    timelines = {}
+    results = []
+
+    for jsonl in tz.iter_claude_trajectories(claude_dir):
+        try:
+            events = parse_trajectory(str(jsonl))
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        _, cwd = get_session_info(events)
+        if not cwd or not Path(cwd).exists():
+            continue
+
+        timestamps = []
+        for e in events:
+            ts = e.get('timestamp')
+            if ts:
+                try:
+                    timestamps.append(_parse_iso(ts))
+                except ValueError:
+                    pass
+        if not timestamps:
+            continue
+        traj_start = min(timestamps)
+        traj_end = max(timestamps)
+
+        sequence, _tool_uses = build_sequence(events)
+        ops = []
+        for s in sequence:
+            if s['seq_type'] != 'tool_use':
+                continue
+            item = s['item']
+            if item.get('name') in ('Write', 'Edit'):
+                ops.append({'tool': item['name'], 'input': item.get('input', {})})
+        if not ops:
+            continue
+
+        rc, out = _git(['rev-parse', '--show-toplevel'], cwd)
+        if rc != 0:
+            continue
+        repo_root = out.strip()
+
+        if repo_root not in timelines:
+            timelines[repo_root] = _get_commit_timeline(repo_root)
+        commits = timelines[repo_root]
+
+        fps_seen = set()
+        fps_ordered = []
+        for op in ops:
+            fp = op['input'].get('file_path', '')
+            if fp and fp not in fps_seen:
+                fps_ordered.append(fp)
+                fps_seen.add(fp)
+
+        rels = {}
+        skip = False
+        for fp in fps_ordered:
+            rel = _rel(fp, repo_root)
+            if rel is None:
+                skip = True
+                break
+            rels[fp] = rel
+        if skip:
+            continue
+
+        start_commit = None
+        for dt, h in commits:
+            if dt <= traj_start:
+                start_commit = h
+
+        initial = {
+            fp: (_file_at(repo_root, start_commit, rel) if start_commit else None)
+            for fp, rel in rels.items()
+        }
+        simulated = _simulate_ops(ops, initial)
+
+        end_commit = _end_commit_by_content(repo_root, rels, simulated, traj_end)
+        strategy = 'content'
+        if end_commit is None:
+            end_commit = _end_commit_by_time(commits, traj_end, window_hours=window_hours)
+            strategy = 'timestamp'
+        if end_commit is None:
+            continue
+
+        parent = _get_parent(repo_root, end_commit)
+        if parent:
+            parent_time = _commit_time(repo_root, parent)
+            if parent_time and parent_time <= traj_start:
+                start_commit = parent
+                initial = {fp: _file_at(repo_root, start_commit, rel) for fp, rel in rels.items()}
+                simulated = _simulate_ops(ops, initial)
+
+        matched_files = []
+        any_mismatch = False
+        for fp, sim in simulated.items():
+            rel = rels.get(fp)
+            if not rel:
+                continue
+            actual = _file_at(repo_root, end_commit, rel)
+            if actual is None:
+                continue
+            if sim == actual:
+                matched_files.append(rel)
+            else:
+                any_mismatch = True
+
+        if not matched_files or any_mismatch:
+            continue
+
+        results.append({
+            'cwd': cwd,
+            'trajectory': jsonl.name,
+            'commit_before': start_commit[:12] if start_commit else None,
+            'commit_after': end_commit[:12],
+            'strategy': strategy,
+            'files': matched_files,
+        })
+
+    return results
+
+
+def _parse_copilot_session(events_path):
+    """
+    Parse a Copilot session JSONL and return {cwd, start, end, ops} or None.
+
+    Handles three file-editing tools:
+      edit         → Edit op  {file_path, old_string, new_string}
+      create       → Write op {file_path, content}
+      apply_patch  → delegated to _normalize_codex_tool_call (same format as Codex)
+    """
+    events = []
+    try:
+        with open(events_path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    events.append(json.loads(line))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    cwd = None
+    timestamps = []
+    ops = []
+
+    for e in events:
+        ts = e.get('timestamp')
+        if ts:
+            try:
+                timestamps.append(_parse_iso(ts))
+            except ValueError:
+                pass
+
+        if e.get('type') == 'session.start':
+            cwd = e.get('data', {}).get('context', {}).get('cwd')
+
+        if e.get('type') == 'tool.execution_start':
+            d = e.get('data', {})
+            tool_name = d.get('toolName', '')
+            args = d.get('arguments', {})
+            if not isinstance(args, dict):
+                continue
+
+            if tool_name == 'edit':
+                path = args.get('path', '')
+                if path:
+                    ops.append({
+                        'tool': 'Edit',
+                        'input': {
+                            'file_path': path,
+                            'old_string': args.get('old_str', ''),
+                            'new_string': args.get('new_str', ''),
+                        },
+                    })
+
+            elif tool_name == 'create':
+                path = args.get('path', '')
+                if path:
+                    ops.append({
+                        'tool': 'Write',
+                        'input': {
+                            'file_path': path,
+                            'content': args.get('file_text', ''),
+                        },
+                    })
+
+            elif tool_name == 'apply_patch':
+                patch = args.get('patch') or args.get('input', '')
+                normalized = _normalize_codex_tool_call('apply_patch', patch, cwd)
+                if normalized:
+                    path, _, patch_args = normalized
+                    ops.append({
+                        'tool': 'Write',
+                        'input': {'file_path': path, '_apply_patch': patch_args},
+                    })
+
+    if not cwd or not timestamps or not ops:
+        return None
+
+    return {
+        'path': str(events_path),
+        'cwd': cwd,
+        'start': min(timestamps),
+        'end': max(timestamps),
+        'ops': ops,
+    }
+
+
+def find_reproducible_trajectories_copilot(copilot_dir=None, window_hours=24):
+    """
+    Scan all Copilot agent sessions in copilot_dir/session-state/ and return
+    those whose file edits reproduce the file state at the nearest commit.
+
+    Uses the same content-match + timestamp-fallback strategy as the Claude variant.
+
+    Returns list of dicts: {cwd, trajectory, commit_before, commit_after,
+                             strategy, files}
+    """
+    if copilot_dir is None:
+        copilot_dir = Path.home() / '.copilot'
+    copilot_dir = Path(copilot_dir)
+
+    timelines = {}
+    results = []
+
+    for events_path in tz.iter_copilot_event_trajectories(copilot_dir):
+        info = _parse_copilot_session(events_path)
+        if info is None:
+            continue
+
+        cwd = info['cwd']
+        if not Path(cwd).exists():
+            continue
+
+        rc, out = _git(['rev-parse', '--show-toplevel'], cwd)
+        if rc != 0:
+            continue
+        repo_root = out.strip()
+
+        if repo_root not in timelines:
+            timelines[repo_root] = _get_commit_timeline(repo_root)
+        commits = timelines[repo_root]
+
+        ops = [op for op in info['ops'] if op['tool'] in ('Write', 'Edit')]
+        # apply_patch ops are stored as Write with _apply_patch key — skip them
+        # for simulation (content is not directly usable); keep only plain Write/Edit
+        ops = [op for op in ops if '_apply_patch' not in op['input']]
+        if not ops:
+            continue
+
+        fps_seen = set()
+        fps_ordered = []
+        for op in ops:
+            fp = op['input'].get('file_path', '')
+            if fp and fp not in fps_seen:
+                fps_ordered.append(fp)
+                fps_seen.add(fp)
+
+        rels = {}
+        skip = False
+        for fp in fps_ordered:
+            rel = _rel(fp, repo_root)
+            if rel is None:
+                skip = True
+                break
+            rels[fp] = rel
+        if skip:
+            continue
+
+        traj_start = info['start']
+        traj_end = info['end']
+
+        start_commit = None
+        for dt, h in commits:
+            if dt <= traj_start:
+                start_commit = h
+
+        initial = {
+            fp: (_file_at(repo_root, start_commit, rel) if start_commit else None)
+            for fp, rel in rels.items()
+        }
+        simulated = _simulate_ops(ops, initial)
+
+        end_commit = _end_commit_by_content(repo_root, rels, simulated, traj_end)
+        strategy = 'content'
+        if end_commit is None:
+            end_commit = _end_commit_by_time(commits, traj_end, window_hours=window_hours)
+            strategy = 'timestamp'
+        if end_commit is None:
+            continue
+
+        parent = _get_parent(repo_root, end_commit)
+        if parent:
+            parent_time = _commit_time(repo_root, parent)
+            if parent_time and parent_time <= traj_start:
+                start_commit = parent
+                initial = {fp: _file_at(repo_root, start_commit, rel) for fp, rel in rels.items()}
+                simulated = _simulate_ops(ops, initial)
+
+        matched_files = []
+        any_mismatch = False
+        for fp, sim in simulated.items():
+            rel = rels.get(fp)
+            if not rel:
+                continue
+            actual = _file_at(repo_root, end_commit, rel)
+            if actual is None:
+                continue
+            if sim == actual:
+                matched_files.append(rel)
+            else:
+                any_mismatch = True
+
+        if not matched_files or any_mismatch:
+            continue
+
+        results.append({
+            'cwd': cwd,
+            'trajectory': events_path.parent.name,
+            'commit_before': start_commit[:12] if start_commit else None,
+            'commit_after': end_commit[:12],
+            'strategy': strategy,
+            'files': matched_files,
+        })
+
+    return results
+
+
+def find_reproducible_trajectories_opencode(window_hours=24):
+    """Placeholder: find reproducible trajectories from OpenCode sessions."""
+    raise NotImplementedError("find_reproducible_trajectories_opencode is not yet implemented")
+
+
+# ---------------------------------------------------------------------------
 # add-trajectories-to-repo
 # ---------------------------------------------------------------------------
 
@@ -897,31 +1337,6 @@ def _public_github_repo_url(repo_root, public_cache):
         if public_cache[owner_repo]:
             return f'https://github.com/{owner_repo}'
     return None
-
-
-def _get_codex_session_info(events):
-    """
-    Extract (session_id, cwd) from OpenAI Codex CLI session events.
-
-    Codex sessions include a metadata object with a 'cwd' field, typically
-    the first event in the JSONL file. Only events that look like session
-    metadata (i.e. contain 'cwd' but no 'role' field used by chat messages)
-    are considered.
-    """
-    for e in events:
-        if not isinstance(e, dict):
-            continue
-        if e.get('type') == 'session_meta':
-            payload = e.get('payload') or {}
-            if payload.get('cwd'):
-                return payload.get('id') or payload.get('session_id'), payload['cwd']
-        # Chat messages (user/assistant/tool) carry a 'role' field — skip them.
-        # Session metadata events have 'cwd' but no 'role'.
-        if e.get('role'):
-            continue
-        if e.get('cwd'):
-            return e.get('id') or e.get('session_id'), e['cwd']
-    return None, None
 
 
 def _normalize_codex_tool_call(name, raw_input, session_cwd):
@@ -1081,7 +1496,7 @@ def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=
         groups[key]['edited_files'].update(modifications.keys())
 
     # --- Claude Code trajectories ---
-    for traj_path in sorted(claude_dir.glob('projects/**/*.jsonl')):
+    for traj_path in tz.iter_claude_trajectories(claude_dir):
         try:
             events = parse_trajectory(str(traj_path))
         except (json.JSONDecodeError, OSError):
@@ -1091,7 +1506,7 @@ def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=
         _process_modifications(traj_path, modifications)
 
     # --- pi trajectories ---
-    for traj_path in pi_trajectory.iter_session_paths():
+    for traj_path in tz.iter_pi_trajectories():
         try:
             events = parse_trajectory(str(traj_path))
         except (json.JSONDecodeError, OSError):
@@ -1101,7 +1516,7 @@ def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=
         _process_modifications(traj_path, modifications)
 
     # --- Codex CLI trajectories ---
-    for traj_path in sorted(codex_dir.glob('sessions/**/*.jsonl')):
+    for traj_path in tz.iter_codex_trajectories(codex_dir):
         try:
             events = []
             with open(traj_path) as f:
@@ -1111,7 +1526,7 @@ def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=
                         events.append(json.loads(line))
         except (json.JSONDecodeError, OSError):
             continue
-        _, session_cwd = _get_codex_session_info(events)
+        session_cwd = tz.get_cwd_from_trajectory(traj_path) or None
         modifications = _collect_codex_modifications(events, session_cwd)
         _process_modifications(traj_path, modifications)
 
@@ -1189,7 +1604,8 @@ _COLLECTION_HOOK_MARKER = '# reproducible-trajectories collection hook'
 
 def _install_collection_webhook(repo_paths):
     """Add/update a pre-commit git hook in each repo that shares trajectories."""
-    hook_body = 'pre-commit-collect-trajectories\n'
+    binary = shutil.which('pre-commit-collect-trajectories') or 'pre-commit-collect-trajectories'
+    hook_body = f'{binary}\n'
     installed = 0
     for repo_path in repo_paths:
         hook_path = Path(repo_path) / '.git' / 'hooks' / 'pre-commit'
@@ -1334,6 +1750,60 @@ def main(argv=None):
         help="Find the most recent trajectory matching staged files, check reproducibility, and POST to API",
     )
 
+    p_find = subparsers.add_parser(
+        "find-reproducible-trajectories-claude",
+        help="Scan ~/.claude/projects for trajectories whose edits reproduce a nearby commit",
+    )
+    p_find.add_argument(
+        "--claude-dir",
+        default=None,
+        help="Path to .claude directory (default: ~/.claude)",
+    )
+    p_find.add_argument("--json", action="store_true", help="Output results as JSON")
+    p_find.add_argument(
+        "--output", "-o",
+        default=None,
+        help="Write JSON results to this file",
+    )
+    p_find.add_argument(
+        "--window-hours",
+        type=float,
+        default=24.0,
+        help="Hours after trajectory end to search for a commit via timestamp fallback (default: 24)",
+    )
+    p_find.add_argument(
+        "--yes",
+        action="store_true",
+        help="Auto-confirm submission to the server",
+    )
+
+    p_find_copilot = subparsers.add_parser(
+        "find-reproducible-trajectories-copilot",
+        help="Scan ~/.copilot/session-state for trajectories whose edits reproduce a nearby commit",
+    )
+    p_find_copilot.add_argument(
+        "--copilot-dir",
+        default=None,
+        help="Path to .copilot directory (default: ~/.copilot)",
+    )
+    p_find_copilot.add_argument("--json", action="store_true", help="Output results as JSON")
+    p_find_copilot.add_argument(
+        "--output", "-o",
+        default=None,
+        help="Write JSON results to this file",
+    )
+    p_find_copilot.add_argument(
+        "--window-hours",
+        type=float,
+        default=24.0,
+        help="Hours after session end to search for a commit via timestamp fallback (default: 24)",
+    )
+    p_find_copilot.add_argument(
+        "--yes",
+        action="store_true",
+        help="Auto-confirm submission to the server",
+    )
+
     args = parser.parse_args(argv)
     claude_dir = Path(args.claude_dir or Path.home() / ".claude") if hasattr(args, "claude_dir") else Path.home() / ".claude"
 
@@ -1440,6 +1910,85 @@ def main(argv=None):
         print(f"  Trajectories uploaded : {len(all_trajs)}")
         print(f"  Hooks added           : {hooks_added}")
         print("─────────────────────────────────────────")
+        return
+
+    if args.command in ("find-reproducible-trajectories-claude",
+                        "find-reproducible-trajectories-copilot"):
+        if args.command == "find-reproducible-trajectories-claude":
+            results = find_reproducible_trajectories_claude(
+                claude_dir=str(claude_dir),
+                window_hours=args.window_hours,
+            )
+            traj_lookup = lambda r: [
+                Path(
+                    resolve_trajectory_path(
+                        r['trajectory'][:-6] if r['trajectory'].endswith('.jsonl') else r['trajectory'],
+                        str(claude_dir),
+                    )
+                )
+            ]
+        else:
+            copilot_dir = Path(args.copilot_dir or Path.home() / '.copilot')
+            results = find_reproducible_trajectories_copilot(
+                copilot_dir=str(copilot_dir),
+                window_hours=args.window_hours,
+            )
+            traj_lookup = lambda r: [copilot_dir / 'session-state' / r['trajectory'] / 'events.jsonl']
+
+        if args.output:
+            Path(args.output).write_text(json.dumps(results, indent=2))
+            print(f"Wrote {len(results)} entries to {args.output}")
+            return
+        if args.json:
+            print(json.dumps(results, indent=2))
+            return
+        if not results:
+            print("No reproducible trajectories found.")
+            return
+        for r in results:
+            print(f"{r['trajectory']:<45} {r['commit_before']} -> {r['commit_after']}  [{r['strategy']}]")
+            for f in r['files']:
+                print(f"  {f}")
+        print()
+        if args.yes:
+            answer = 'y'
+        else:
+            answer = input(
+                f"Submit these {len(results)} reproducible trajectories to the KTH server? [y/N] "
+            ).strip().lower()
+        if answer != 'y':
+            print("Submission cancelled.")
+            return
+        import tempfile, zipfile, urllib.request
+        _rc, git_email = _git(['config', '--global', 'user.email'], os.getcwd())
+        git_email = git_email.strip()
+        metadata = {
+            'git_email': git_email,
+            'trajectories': results,
+        }
+        with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp:
+            zip_path = tmp.name
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr('metadata.json', json.dumps(metadata, indent=2))
+            for r in results:
+                traj_files = traj_lookup(r)
+                if traj_files and Path(traj_files[0]).exists():
+                    zf.write(str(traj_files[0]), r['trajectory'])
+        print(f"Uploading {len(results)} trajectories ...")
+        zip_data = Path(zip_path).read_bytes()
+        req = urllib.request.Request(
+            'https://www.monperrus.net/martin/transfer-sh.py/trajectories',
+            data=zip_data,
+            method='PUT',
+            headers={
+                'User-Agent': 'reproducible-trajectories',
+                'Content-Length': str(len(zip_data)),
+            },
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            url = resp.read().decode().strip()
+        print(f"Submitted: {url}")
+        print("Thank you for contributing to the KTH experiment on coding agents!")
         return
 
     if args.command == "verify-trajectories":

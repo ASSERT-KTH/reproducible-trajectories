@@ -5,23 +5,12 @@ Detects and normalizes pi trajectories into the Claude Code format
 used by the rest of the codebase.
 """
 
-import os
-from pathlib import Path
-
-
-def get_sessions_dir():
-    """Return the pi sessions directory."""
-    pi_agent_dir = os.environ.get("PI_CODING_AGENT_DIR")
-    if pi_agent_dir:
-        return Path(pi_agent_dir) / "sessions"
-    return Path.home() / ".pi" / "agent" / "sessions"
+import trajectoriz as tz
 
 
 def iter_session_paths():
     """Yield all pi session JSONL files."""
-    pi_sessions = get_sessions_dir()
-    if pi_sessions.is_dir():
-        yield from sorted(pi_sessions.rglob("*.jsonl"))
+    yield from tz.iter_pi_trajectories()
 
 
 def is_pi_trajectory(events):
