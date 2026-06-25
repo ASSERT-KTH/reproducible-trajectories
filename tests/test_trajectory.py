@@ -1275,124 +1275,149 @@ class TestReplayTrajectories:
             check=True, capture_output=True, cwd=str(repo),
         )
 
-    def test_collect_replay_writes_orders_multiple_agents(self, tmp_path):
-        from reproducible_trajectories.trajectory import _collect_replay_writes
+    def test_collect_replay_writes_orders_multiple_agents(self, tmp_path, monkeypatch):
+        from reproducible_trajectories.trajectory import _collect_replay_operations
+        import trajectoriz as tz
 
         repo = tmp_path / "repo"
         repo.mkdir()
-        traj_dir = repo / "trajectories"
-        traj_dir.mkdir()
-
-        claude_traj = traj_dir / "claude.jsonl"
-        _write_jsonl(
-            claude_traj,
-            [
-                _make_tool_use_event(
-                    "e1",
-                    "t1",
-                    "Write",
-                    {"file_path": str(repo / "foo.md"), "content": "from claude\n"},
-                    session_id="claude-sess",
-                    cwd=str(repo),
-                )
-            ],
-        )
-
-        codex_traj = traj_dir / "codex.jsonl"
-        _write_jsonl(
-            codex_traj,
-            [
-                {
-                    "timestamp": "2026-01-01T00:00:02.000Z",
-                    "type": "session_meta",
-                    "payload": {"id": "codex-sess", "cwd": str(repo)},
-                },
-                {
-                    "timestamp": "2026-01-01T00:00:02.000Z",
-                    "type": "response_item",
-                    "payload": {
-                        "type": "function_call",
-                        "call_id": "call-1",
-                        "name": "write_file",
-                        "arguments": json.dumps({"path": "foo.md", "content": "from codex\n"}),
+        rec1 = type("Rec", (), {"agent": "claude", "source": Path("/tmp/claude.jsonl")})()
+        rec2 = type("Rec", (), {"agent": "codex", "source": Path("/tmp/codex.jsonl")})()
+        traj1 = tz.ParsedTrajectory(
+            cwd=str(repo),
+            steps=[{
+                "timestamp": "2026-01-01T00:00:01.000Z",
+                "tool_calls": [{
+                    "function_name": "Write",
+                    "arguments": {
+                        "file_path": str(repo / "foo.md"),
+                        "content": "from claude\n",
                     },
-                },
-                {
-                    "timestamp": "2026-01-01T00:00:03.000Z",
-                    "type": "event_msg",
-                    "payload": {"type": "task_complete"},
-                },
-            ],
+                }],
+            }],
+        )
+        traj2 = tz.ParsedTrajectory(
+            cwd=str(repo),
+            steps=[{
+                "timestamp": "2026-01-01T00:00:02.000Z",
+                "tool_calls": [{
+                    "function_name": "write_file",
+                    "arguments": {
+                        "path": "foo.md",
+                        "content": "from codex\n",
+                    },
+                }],
+            }],
         )
 
-        writes = _collect_replay_writes(traj_dir, repo)
+        monkeypatch.setattr(
+            "reproducible_trajectories.trajectory.trajectoriz_local_records",
+            lambda _repo: [rec1, rec2],
+        )
+        monkeypatch.setattr(
+            "reproducible_trajectories.trajectory.trajectoriz_parse_record",
+            lambda rec: traj1 if rec.agent == "claude" else traj2,
+        )
 
-        assert [w["agent"] for w in writes] == ["claude", "codex"]
-        assert [w["rel_path"] for w in writes] == ["foo.md", "foo.md"]
-        assert writes[0]["content"] == "from claude\n"
-        assert writes[1]["content"] == "from codex\n"
+        operations = _collect_replay_operations(repo)
 
-    def test_replay_trajectories_commits_in_timestamp_order(self, tmp_path):
+        assert [op["agent"] for op in operations] == ["claude", "codex"]
+        assert [op["changes"][0]["rel_path"] for op in operations] == ["foo.md", "foo.md"]
+        assert operations[0]["changes"][0]["content"] == "from claude\n"
+        assert operations[1]["changes"][0]["content"] == "from codex\n"
+
+    def test_collect_replay_operations_includes_edit_and_patch(self, tmp_path, monkeypatch):
+        from reproducible_trajectories.trajectory import _collect_replay_operations
+        import trajectoriz as tz
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        rec1 = type("Rec", (), {"agent": "claude", "source": Path("/tmp/claude.jsonl")})()
+        rec2 = type("Rec", (), {"agent": "codex", "source": Path("/tmp/codex.jsonl")})()
+        traj1 = tz.ParsedTrajectory(
+            cwd=str(repo),
+            steps=[{
+                "timestamp": "2026-01-01T00:00:01.000Z",
+                "tool_calls": [{
+                    "function_name": "Edit",
+                    "arguments": {
+                        "file_path": str(repo / "foo.md"),
+                        "old_string": "old",
+                        "new_string": "new",
+                        "replace_all": False,
+                    },
+                }],
+            }],
+        )
+        traj2 = tz.ParsedTrajectory(
+            cwd=str(repo),
+            steps=[{
+                "timestamp": "2026-01-01T00:00:02.000Z",
+                "tool_calls": [{
+                    "function_name": "apply_patch",
+                    "arguments": {
+                        "patch": "*** Begin Patch\n*** Update File: foo.md\n@@\n-old\n+patched\n*** End Patch",
+                    },
+                }],
+            }],
+        )
+
+        monkeypatch.setattr(
+            "reproducible_trajectories.trajectory.trajectoriz_local_records",
+            lambda _repo: [rec1, rec2],
+        )
+        monkeypatch.setattr(
+            "reproducible_trajectories.trajectory.trajectoriz_parse_record",
+            lambda rec: traj1 if rec.agent == "claude" else traj2,
+        )
+
+        operations = _collect_replay_operations(repo)
+
+        assert operations[0]["changes"][0]["kind"] == "edit"
+        assert operations[1]["changes"][0]["kind"] == "patch"
+
+    def test_replay_trajectories_commits_in_timestamp_order(self, tmp_path, monkeypatch):
         from reproducible_trajectories.trajectory import replay_trajectories
+        import trajectoriz as tz
 
         repo = self._init_repo(tmp_path / "repo")
         (repo / "README.md").write_text("seed\n")
-        traj_dir = repo / "trajectories"
-        traj_dir.mkdir()
-
-        _write_jsonl(
-            traj_dir / "claude.jsonl",
-            [
-                {
-                    "parentUuid": None,
-                    "isSidechain": False,
-                    "type": "assistant",
-                    "message": {
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "tool_use",
-                                "id": "t1",
-                                "name": "Write",
-                                "input": {
-                                    "file_path": str(repo / "foo.md"),
-                                    "content": "first\n",
-                                },
-                            }
-                        ],
+        rec1 = type("Rec", (), {"agent": "claude", "source": Path("/tmp/claude.jsonl")})()
+        rec2 = type("Rec", (), {"agent": "codex", "source": Path("/tmp/codex.jsonl")})()
+        traj1 = tz.ParsedTrajectory(
+            cwd=str(repo),
+            steps=[{
+                "timestamp": "2026-01-01T00:00:01.000Z",
+                "tool_calls": [{
+                    "function_name": "Write",
+                    "arguments": {
+                        "file_path": str(repo / "foo.md"),
+                        "content": "first\n",
                     },
-                    "uuid": "u1",
-                    "timestamp": "2026-01-01T00:00:01.000Z",
-                    "sessionId": "claude-sess",
-                    "cwd": str(repo),
-                }
-            ],
+                }],
+            }],
+        )
+        traj2 = tz.ParsedTrajectory(
+            cwd=str(repo),
+            steps=[{
+                "timestamp": "2026-01-01T00:00:02.000Z",
+                "tool_calls": [{
+                    "function_name": "write_file",
+                    "arguments": {
+                        "path": "foo.md",
+                        "content": "second\n",
+                    },
+                }],
+            }],
         )
 
-        _write_jsonl(
-            traj_dir / "codex.jsonl",
-            [
-                {
-                    "timestamp": "2026-01-01T00:00:02.000Z",
-                    "type": "session_meta",
-                    "payload": {"id": "codex-sess", "cwd": str(repo)},
-                },
-                {
-                    "timestamp": "2026-01-01T00:00:02.000Z",
-                    "type": "response_item",
-                    "payload": {
-                        "type": "function_call",
-                        "call_id": "call-1",
-                        "name": "write_file",
-                        "arguments": json.dumps({"path": "foo.md", "content": "second\n"}),
-                    },
-                },
-                {
-                    "timestamp": "2026-01-01T00:00:03.000Z",
-                    "type": "event_msg",
-                    "payload": {"type": "task_complete"},
-                },
-            ],
+        monkeypatch.setattr(
+            "reproducible_trajectories.trajectory.trajectoriz_local_records",
+            lambda _repo: [rec1, rec2],
+        )
+        monkeypatch.setattr(
+            "reproducible_trajectories.trajectory.trajectoriz_parse_record",
+            lambda rec: traj1 if rec.agent == "claude" else traj2,
         )
 
         self._commit_all(repo, "seed trajectories")
@@ -1411,5 +1436,57 @@ class TestReplayTrajectories:
             text=True,
         ).stdout.splitlines()
 
-        assert log[1] == "replay: claude|2026-01-01T00:00:01Z"
-        assert log[2] == "replay: codex|2026-01-01T00:00:02Z"
+        assert log[1] == "replay: claude foo.md (1 lines changed)|2026-01-01T00:00:01Z"
+        assert log[2] == "replay: codex foo.md (2 lines changed)|2026-01-01T00:00:02Z"
+
+    def test_replay_trajectories_applies_edits_and_patches(self, tmp_path, monkeypatch):
+        from reproducible_trajectories.trajectory import replay_trajectories
+        import trajectoriz as tz
+
+        repo = self._init_repo(tmp_path / "repo")
+        (repo / "foo.md").write_text("old\n")
+        rec1 = type("Rec", (), {"agent": "claude", "source": Path("/tmp/claude.jsonl")})()
+        rec2 = type("Rec", (), {"agent": "codex", "source": Path("/tmp/codex.jsonl")})()
+        traj1 = tz.ParsedTrajectory(
+            cwd=str(repo),
+            steps=[{
+                "timestamp": "2026-01-01T00:00:01.000Z",
+                "tool_calls": [{
+                    "function_name": "Edit",
+                    "arguments": {
+                        "file_path": str(repo / "foo.md"),
+                        "old_string": "old",
+                        "new_string": "middle",
+                        "replace_all": False,
+                    },
+                }],
+            }],
+        )
+        traj2 = tz.ParsedTrajectory(
+            cwd=str(repo),
+            steps=[{
+                "timestamp": "2026-01-01T00:00:02.000Z",
+                "tool_calls": [{
+                    "function_name": "apply_patch",
+                    "arguments": {
+                        "patch": "*** Begin Patch\n*** Update File: foo.md\n@@\n-middle\n+final\n*** End Patch",
+                    },
+                }],
+            }],
+        )
+
+        monkeypatch.setattr(
+            "reproducible_trajectories.trajectory.trajectoriz_local_records",
+            lambda _repo: [rec1, rec2],
+        )
+        monkeypatch.setattr(
+            "reproducible_trajectories.trajectory.trajectoriz_parse_record",
+            lambda rec: traj1 if rec.agent == "claude" else traj2,
+        )
+
+        self._commit_all(repo, "seed file")
+
+        commits = replay_trajectories(repo)
+
+        assert len(commits) == 2
+        assert (repo / "foo.md").read_text() == "final\n"

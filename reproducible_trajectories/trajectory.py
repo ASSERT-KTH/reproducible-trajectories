@@ -76,14 +76,9 @@ def build_sequence(events):
 def resolve_trajectory_path(trajectory_arg, claude_dir):
     if os.path.exists(trajectory_arg):
         return trajectory_arg
-    for iterator in (
-        tz.iter_claude_trajectories(claude_dir),
-        tz.iter_pi_trajectories(),
-        tz.iter_codex_trajectories(),
-    ):
-        for path in iterator:
-            if path.stem == trajectory_arg or trajectory_arg in path.name:
-                return str(path)
+    matches = list(Path(claude_dir).glob(f"projects/**/{trajectory_arg}.jsonl"))
+    if matches:
+        return str(matches[0])
     pi_match = pi_trajectory.resolve_session_path(trajectory_arg)
     if pi_match:
         return pi_match
@@ -452,7 +447,7 @@ _TRAJECTORY_TAG_RE = re.compile(r"<trajectory>([^<]+)</trajectory>", re.I)
 
 
 def _uuid_exists(uuid, claude_dir):
-    return any(path.stem == uuid for path in tz.iter_claude_trajectories(claude_dir))
+    return bool(list(Path(claude_dir).glob(f"projects/**/{uuid}.jsonl")))
 
 
 def _validate_identifier(identifier, claude_dir):
@@ -860,7 +855,7 @@ def find_reproducible_trajectories_claude(claude_dir=None, window_hours=24):
     timelines = {}
     results = []
 
-    for jsonl in tz.iter_claude_trajectories(claude_dir):
+    for jsonl in sorted(claude_dir.glob('projects/**/*.jsonl')):
         try:
             events = parse_trajectory(str(jsonl))
         except (OSError, json.JSONDecodeError):
@@ -1081,7 +1076,7 @@ def find_reproducible_trajectories_copilot(copilot_dir=None, window_hours=24):
     timelines = {}
     results = []
 
-    for events_path in tz.iter_copilot_event_trajectories(copilot_dir):
+    for events_path in sorted(copilot_dir.glob('session-state/*/events.jsonl')):
         info = _parse_copilot_session(events_path)
         if info is None:
             continue
@@ -1341,6 +1336,31 @@ def _public_github_repo_url(repo_root, public_cache):
     return None
 
 
+def _get_codex_session_info(events):
+    """
+    Extract (session_id, cwd) from OpenAI Codex CLI session events.
+
+    Codex sessions include a metadata object with a 'cwd' field, typically
+    the first event in the JSONL file. Only events that look like session
+    metadata (i.e. contain 'cwd' but no 'role' field used by chat messages)
+    are considered.
+    """
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        if e.get('type') == 'session_meta':
+            payload = e.get('payload') or {}
+            if payload.get('cwd'):
+                return payload.get('id') or payload.get('session_id'), payload['cwd']
+        # Chat messages (user/assistant/tool) carry a 'role' field — skip them.
+        # Session metadata events have 'cwd' but no 'role'.
+        if e.get('role'):
+            continue
+        if e.get('cwd'):
+            return e.get('id') or e.get('session_id'), e['cwd']
+    return None, None
+
+
 def _normalize_codex_tool_call(name, raw_input, session_cwd):
     """Return (absolute_path, tool_name, input_dict) for a Codex edit call."""
     if name == 'write_file':
@@ -1498,7 +1518,7 @@ def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=
         groups[key]['edited_files'].update(modifications.keys())
 
     # --- Claude Code trajectories ---
-    for traj_path in tz.iter_claude_trajectories(claude_dir):
+    for traj_path in sorted(claude_dir.glob('projects/**/*.jsonl')):
         try:
             events = parse_trajectory(str(traj_path))
         except (json.JSONDecodeError, OSError):
@@ -1508,7 +1528,7 @@ def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=
         _process_modifications(traj_path, modifications)
 
     # --- pi trajectories ---
-    for traj_path in tz.iter_pi_trajectories():
+    for traj_path in pi_trajectory.iter_session_paths():
         try:
             events = parse_trajectory(str(traj_path))
         except (json.JSONDecodeError, OSError):
@@ -1518,7 +1538,7 @@ def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=
         _process_modifications(traj_path, modifications)
 
     # --- Codex CLI trajectories ---
-    for traj_path in tz.iter_codex_trajectories(codex_dir):
+    for traj_path in sorted(codex_dir.glob('sessions/**/*.jsonl')):
         try:
             events = []
             with open(traj_path) as f:
@@ -1528,7 +1548,7 @@ def collect_shareable_trajectories(claude_dir=None, codex_dir=None, public_only=
                         events.append(json.loads(line))
         except (json.JSONDecodeError, OSError):
             continue
-        session_cwd = tz.get_cwd_from_trajectory(traj_path) or None
+        _, session_cwd = _get_codex_session_info(events)
         modifications = _collect_codex_modifications(events, session_cwd)
         _process_modifications(traj_path, modifications)
 
@@ -1608,49 +1628,10 @@ _REPLAY_WRITE_TOOLS = {
     "create_or_update_file": ("path", "content"),
 }
 
-
-def _detect_trajectory_format(path):
-    """Return a trajectoriz parser name for a JSONL trajectory file."""
-    try:
-        with Path(path).open(encoding="utf-8") as f:
-            for i, raw in enumerate(f):
-                if i >= 30:
-                    break
-                raw = raw.strip()
-                if not raw:
-                    continue
-                try:
-                    event = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
-                event_type = event.get("type", "")
-                if "sessionId" in event or (event_type in ("user", "assistant") and "message" in event):
-                    return "claude"
-                if event_type == "session_meta" or (event_type == "event_msg" and "payload" in event):
-                    return "codex"
-                if event_type in ("session.start", "user.message", "assistant.message", "assistant.turn_end"):
-                    return "copilot"
-                if event_type in ("session_start", "tool_call", "tool_result") or (
-                    event_type == "assistant" and "content" in event and "ts" in event
-                ):
-                    return "agent_probe"
-    except OSError:
-        return None
-    return None
-
-
-def _parse_trajectory_with_trajectoriz(path):
-    """Return (agent_name, ParsedTrajectory) for a stored trajectory file."""
-    fmt = _detect_trajectory_format(path)
-    if fmt == "claude":
-        return "claude", tz.parse_claude_trajectory(Path(path))
-    if fmt == "codex":
-        return "codex", tz.parse_codex_trajectory(Path(path))
-    if fmt == "copilot":
-        return "copilot", tz.parse_copilot_event_trajectory(Path(path))
-    if fmt == "agent_probe":
-        return "agent_probe", tz.parse_agent_probe_trajectory(Path(path))
-    return None, None
+_REPLAY_EDIT_TOOLS = {
+    "Edit": ("file_path", "old_string", "new_string", "replace_all"),
+    "edit": ("path", "oldText", "newText", "replace_all"),
+}
 
 
 def _normalize_write_path(raw_path, session_cwd):
@@ -1662,90 +1643,70 @@ def _normalize_write_path(raw_path, session_cwd):
     return path.resolve()
 
 
-_REPLAY_EDIT_TOOLS = {
-    "Edit": ("file_path", "old_string", "new_string", "replace_all"),
-    "edit": ("path", "old_str", "new_str", "replace_all"),
-}
+def _result_content_indicates_error(content):
+    if not isinstance(content, str):
+        return False
+    lowered = content.lower()
+    return "<tool_use_error>" in lowered or "is_error" in lowered and "true" in lowered
+
+
+def _successful_tool_calls(step):
+    """Yield tool calls whose paired tool results do not indicate failure."""
+    results = {
+        result.get("source_call_id"): result.get("content", "")
+        for result in (step.get("observation") or {}).get("results", [])
+        if isinstance(result, dict)
+    }
+    for call in step.get("tool_calls", []):
+        call_id = call.get("tool_call_id")
+        if call_id and _result_content_indicates_error(results.get(call_id, "")):
+            continue
+        yield call
 
 
 def _path_in_repo(abs_path, repo_root):
     if abs_path is None:
         return None
     try:
-        return abs_path.relative_to(repo_root)
+        return Path(abs_path).resolve().relative_to(repo_root)
     except ValueError:
         return None
-
-
-def _result_content_indicates_error(content):
-    if isinstance(content, str):
-        return "<tool_use_error>" in content
-    if not isinstance(content, list):
-        return False
-    for item in content:
-        if not isinstance(item, dict):
-            continue
-        if item.get("type") == "text" and "<tool_use_error>" in item.get("text", ""):
-            return True
-    return False
-
-
-def _successful_tool_calls(step):
-    tool_calls = step.get("tool_calls", [])
-    tool_results = step.get("tool_results", [])
-    if not tool_results:
-        return tool_calls
-    successful = []
-    for index, call in enumerate(tool_calls):
-        if index < len(tool_results):
-            result = tool_results[index]
-            if result.get("is_error"):
-                continue
-            if _result_content_indicates_error(result.get("content")):
-                continue
-        successful.append(call)
-    return successful
-
-
-def _find_subsequence(lines, needle):
-    if not needle:
-        return 0
-    end = len(lines) - len(needle) + 1
-    for index in range(max(end, 0)):
-        if lines[index : index + len(needle)] == needle:
-            return index
-    return -1
-
-
-def _replace_between_anchors(current, old_string, new_string):
-    old_lines = old_string.splitlines()
-    if not old_lines:
-        return None
-    current_lines = current.splitlines()
-    prefix = old_lines[0]
-    suffix = old_lines[-1]
-    start = next((i for i, line in enumerate(current_lines) if line == prefix), None)
-    if start is None:
-        return None
-    end = None
-    for index in range(len(current_lines) - 1, start - 1, -1):
-        if current_lines[index] == suffix:
-            end = index
-            break
-    if end is None or end < start:
-        return None
-    replacement_lines = new_string.splitlines()
-    updated_lines = current_lines[:start] + replacement_lines + current_lines[end + 1 :]
-    trailing_newline = current.endswith("\n") or new_string.endswith("\n")
-    if not updated_lines:
-        return ""
-    return "\n".join(updated_lines) + ("\n" if trailing_newline else "")
 
 
 def _join_lines(lines):
     if not lines:
         return ""
     return "\n".join(lines) + "\n"
+
+
+def _find_subsequence(haystack, needle):
+    if not needle:
+        return 0
+    limit = len(haystack) - len(needle) + 1
+    for index in range(max(limit, 0)):
+        if haystack[index : index + len(needle)] == needle:
+            return index
+    return -1
+
+
+def _replace_between_anchors(current_text, old_string, new_string):
+    old_lines = [line for line in old_string.splitlines() if line.strip()]
+    if len(old_lines) < 2:
+        return None
+    first_line = old_lines[0]
+    last_line = old_lines[-1]
+    start = current_text.find(first_line)
+    if start == -1:
+        return None
+    end_marker = current_text.find(last_line, start + len(first_line))
+    if end_marker == -1:
+        return None
+    line_end = current_text.find("\n", end_marker)
+    if line_end == -1:
+        line_end = len(current_text)
+    else:
+        line_end += 1
+    return current_text[:start] + new_string + current_text[line_end:]
 
 
 def _apply_line_hunks(current_text, hunks, file_label):
@@ -1994,24 +1955,6 @@ def _collect_replay_operations(repo_root):
     return deduped
 
 
-def _git_run(repo_root, args, env=None):
-    return subprocess.run(
-        ["git"] + args,
-        cwd=str(repo_root),
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-
-
-def _ensure_clean_worktree(repo_root):
-    status = _git_run(repo_root, ["status", "--porcelain"])
-    if status.returncode != 0:
-        raise RuntimeError(status.stderr.strip() or "git status failed")
-    if status.stdout.strip():
-        raise RuntimeError("git worktree is not clean; replay-trajectories requires a clean repository")
-
-
 def _apply_replay_change(change):
     kind = change["kind"]
     path = Path(change["path"])
@@ -2080,6 +2023,16 @@ def _apply_replay_change(change):
     raise RuntimeError(f"unsupported replay change kind: {kind}")
 
 
+def _git_run(repo_root, args, env=None):
+    return subprocess.run(
+        ["git"] + args,
+        cwd=str(repo_root),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
 def _staged_replay_commit_message(repo_root, agent, staged_paths):
     diff = _git_run(repo_root, ["diff", "--cached", "--numstat", "--", *staged_paths])
     if diff.returncode != 0:
@@ -2101,6 +2054,14 @@ def _staged_replay_commit_message(repo_root, agent, staged_paths):
         if len(staged_paths) > 2:
             path_label += f", +{len(staged_paths) - 2} more"
     return f"replay: {agent} {path_label} ({line_count} lines changed)"
+
+
+def _ensure_clean_worktree(repo_root):
+    status = _git_run(repo_root, ["status", "--porcelain"])
+    if status.returncode != 0:
+        raise RuntimeError(status.stderr.strip() or "git status failed")
+    if status.stdout.strip():
+        raise RuntimeError("git worktree is not clean; replay-trajectories requires a clean repository")
 
 
 def replay_trajectories(repo_path, trajectory_dir=None):
@@ -2308,7 +2269,7 @@ def main(argv=None):
 
     p_replay = subparsers.add_parser(
         "replay-trajectories",
-        help="Replay discovered trajectory mutations in chronological order and commit them",
+        help="Replay stored write events in chronological order and commit them",
     )
     p_replay.add_argument(
         "repo",
@@ -2375,6 +2336,7 @@ def main(argv=None):
         action="store_true",
         help="Auto-confirm submission to the server",
     )
+
     args = parser.parse_args(argv)
     claude_dir = Path(args.claude_dir or Path.home() / ".claude") if hasattr(args, "claude_dir") else Path.home() / ".claude"
 
@@ -2490,14 +2452,7 @@ def main(argv=None):
                 claude_dir=str(claude_dir),
                 window_hours=args.window_hours,
             )
-            traj_lookup = lambda r: [
-                Path(
-                    resolve_trajectory_path(
-                        r['trajectory'][:-6] if r['trajectory'].endswith('.jsonl') else r['trajectory'],
-                        str(claude_dir),
-                    )
-                )
-            ]
+            traj_lookup = lambda r: list(claude_dir.glob(f"projects/**/{r['trajectory']}"))
         else:
             copilot_dir = Path(args.copilot_dir or Path.home() / '.copilot')
             results = find_reproducible_trajectories_copilot(
@@ -2505,6 +2460,7 @@ def main(argv=None):
                 window_hours=args.window_hours,
             )
             traj_lookup = lambda r: [copilot_dir / 'session-state' / r['trajectory'] / 'events.jsonl']
+
         if args.output:
             Path(args.output).write_text(json.dumps(results, indent=2))
             print(f"Wrote {len(results)} entries to {args.output}")

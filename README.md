@@ -292,17 +292,17 @@ python -m reproducible_trajectories add-trajectories-to-repo . --dry-run
 
 Supported mutation types:
 - whole-file writes
-- Claude / pi `Edit` operations
-- Codex `apply_patch` operations (OpenAI patch format and unified diff)
+- Claude / pi `Edit`
+- Codex `apply_patch` (OpenAI patch format and unified diff)
 
 Safety constraints:
 - the repository must have a clean worktree before replay starts
-- only in-repo mutations are replayed
+- only mutations targeting files inside the target repository are replayed
 - duplicate replay events discovered from mirrored trajectory stores are ignored
-- source trajectory events that originally failed are skipped
-- unreplayable edits or patches are skipped with a warning
+- replay events that originally failed in the source trajectory are skipped
+- edits or patches that cannot be cleanly replayed on the reconstructed state are skipped with a warning instead of aborting the whole run
 - commit messages include the agent name, replayed file path(s), and total staged line delta, e.g. `replay: claude mc_repl.py (42 lines changed)`
-- author and committer dates are both set to the original event timestamp
+- author and committer dates are both set to the original write-event timestamp
 
 ```
 usage: python -m reproducible_trajectories replay-trajectories [-h]
@@ -312,7 +312,7 @@ positional arguments:
   repo                  path to the git repository (default: current directory)
 ```
 
-**Example — replay trajectories discoverable for the current repository:**
+**Example — replay the repository's stored trajectories:**
 ```
 python -m reproducible_trajectories replay-trajectories .
 ```
