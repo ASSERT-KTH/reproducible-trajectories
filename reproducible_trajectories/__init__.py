@@ -8,6 +8,7 @@ from reproducible_trajectories.trajectory import (
     verify_trajectories,
     add_trajectories_to_repo,
     open_source_trajectories,
+    replay_trajectories,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "verify_trajectories",
     "add_trajectories_to_repo",
     "open_source_trajectories",
+    "replay_trajectories",
 ]

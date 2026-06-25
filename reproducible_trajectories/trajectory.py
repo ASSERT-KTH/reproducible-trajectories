@@ -19,12 +19,14 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import trajectoriz as tz
-
 try:
     from . import pi_trajectory
 except ImportError:  # pragma: no cover - allows direct script execution
     import pi_trajectory
+
+import trajectoriz as tz
+from trajectoriz.cli import _local_records as trajectoriz_local_records
+from trajectoriz.cli import _parse_record as trajectoriz_parse_record
 
 
 # ---------------------------------------------------------------------------
@@ -1596,6 +1598,565 @@ def _share_target_slug(result, index):
 
 
 # ---------------------------------------------------------------------------
+# replay-trajectories
+# ---------------------------------------------------------------------------
+
+_REPLAY_WRITE_TOOLS = {
+    "Write": ("file_path", "content"),
+    "write": ("path", "content"),
+    "write_file": ("path", "content"),
+    "create_or_update_file": ("path", "content"),
+}
+
+
+def _detect_trajectory_format(path):
+    """Return a trajectoriz parser name for a JSONL trajectory file."""
+    try:
+        with Path(path).open(encoding="utf-8") as f:
+            for i, raw in enumerate(f):
+                if i >= 30:
+                    break
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    event = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                event_type = event.get("type", "")
+                if "sessionId" in event or (event_type in ("user", "assistant") and "message" in event):
+                    return "claude"
+                if event_type == "session_meta" or (event_type == "event_msg" and "payload" in event):
+                    return "codex"
+                if event_type in ("session.start", "user.message", "assistant.message", "assistant.turn_end"):
+                    return "copilot"
+                if event_type in ("session_start", "tool_call", "tool_result") or (
+                    event_type == "assistant" and "content" in event and "ts" in event
+                ):
+                    return "agent_probe"
+    except OSError:
+        return None
+    return None
+
+
+def _parse_trajectory_with_trajectoriz(path):
+    """Return (agent_name, ParsedTrajectory) for a stored trajectory file."""
+    fmt = _detect_trajectory_format(path)
+    if fmt == "claude":
+        return "claude", tz.parse_claude_trajectory(Path(path))
+    if fmt == "codex":
+        return "codex", tz.parse_codex_trajectory(Path(path))
+    if fmt == "copilot":
+        return "copilot", tz.parse_copilot_event_trajectory(Path(path))
+    if fmt == "agent_probe":
+        return "agent_probe", tz.parse_agent_probe_trajectory(Path(path))
+    return None, None
+
+
+def _normalize_write_path(raw_path, session_cwd):
+    if not raw_path:
+        return None
+    path = Path(raw_path)
+    if not path.is_absolute() and session_cwd:
+        path = Path(session_cwd) / path
+    return path.resolve()
+
+
+_REPLAY_EDIT_TOOLS = {
+    "Edit": ("file_path", "old_string", "new_string", "replace_all"),
+    "edit": ("path", "old_str", "new_str", "replace_all"),
+}
+
+
+def _path_in_repo(abs_path, repo_root):
+    if abs_path is None:
+        return None
+    try:
+        return abs_path.relative_to(repo_root)
+    except ValueError:
+        return None
+
+
+def _result_content_indicates_error(content):
+    if isinstance(content, str):
+        return "<tool_use_error>" in content
+    if not isinstance(content, list):
+        return False
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "text" and "<tool_use_error>" in item.get("text", ""):
+            return True
+    return False
+
+
+def _successful_tool_calls(step):
+    tool_calls = step.get("tool_calls", [])
+    tool_results = step.get("tool_results", [])
+    if not tool_results:
+        return tool_calls
+    successful = []
+    for index, call in enumerate(tool_calls):
+        if index < len(tool_results):
+            result = tool_results[index]
+            if result.get("is_error"):
+                continue
+            if _result_content_indicates_error(result.get("content")):
+                continue
+        successful.append(call)
+    return successful
+
+
+def _find_subsequence(lines, needle):
+    if not needle:
+        return 0
+    end = len(lines) - len(needle) + 1
+    for index in range(max(end, 0)):
+        if lines[index : index + len(needle)] == needle:
+            return index
+    return -1
+
+
+def _replace_between_anchors(current, old_string, new_string):
+    old_lines = old_string.splitlines()
+    if not old_lines:
+        return None
+    current_lines = current.splitlines()
+    prefix = old_lines[0]
+    suffix = old_lines[-1]
+    start = next((i for i, line in enumerate(current_lines) if line == prefix), None)
+    if start is None:
+        return None
+    end = None
+    for index in range(len(current_lines) - 1, start - 1, -1):
+        if current_lines[index] == suffix:
+            end = index
+            break
+    if end is None or end < start:
+        return None
+    replacement_lines = new_string.splitlines()
+    updated_lines = current_lines[:start] + replacement_lines + current_lines[end + 1 :]
+    trailing_newline = current.endswith("\n") or new_string.endswith("\n")
+    if not updated_lines:
+        return ""
+    return "\n".join(updated_lines) + ("\n" if trailing_newline else "")
+
+
+def _join_lines(lines):
+    if not lines:
+        return ""
+    return "\n".join(lines) + "\n"
+
+
+def _apply_line_hunks(current_text, hunks, file_label):
+    lines = current_text.splitlines()
+    trailing_newline = current_text.endswith("\n")
+    for hunk in hunks:
+        old_lines = hunk["old_lines"]
+        new_lines = hunk["new_lines"]
+        index = _find_subsequence(lines, old_lines)
+        if index == -1:
+            if _find_subsequence(lines, new_lines) != -1:
+                continue
+            raise RuntimeError(f"could not apply patch hunk to {file_label}")
+        lines[index : index + len(old_lines)] = new_lines
+        trailing_newline = True
+    if not lines:
+        return ""
+    return "\n".join(lines) + ("\n" if trailing_newline else "")
+
+
+def _parse_openai_patch(patch_text):
+    lines = patch_text.splitlines()
+    changes = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith("*** Update File: "):
+            path = line[len("*** Update File: ") :].strip()
+            move_to = None
+            index += 1
+            if index < len(lines) and lines[index].startswith("*** Move to: "):
+                move_to = lines[index][len("*** Move to: ") :].strip()
+                index += 1
+            hunks = []
+            while index < len(lines) and not lines[index].startswith("*** "):
+                if lines[index].startswith("@@"):
+                    index += 1
+                    old_lines = []
+                    new_lines = []
+                    while index < len(lines) and not lines[index].startswith("@@") and not lines[index].startswith("*** "):
+                        prefix = lines[index][:1]
+                        content = lines[index][1:] if lines[index] else ""
+                        if prefix == " ":
+                            old_lines.append(content)
+                            new_lines.append(content)
+                        elif prefix == "-":
+                            old_lines.append(content)
+                        elif prefix == "+":
+                            new_lines.append(content)
+                        index += 1
+                    hunks.append({"old_lines": old_lines, "new_lines": new_lines})
+                    continue
+                index += 1
+            changes.append({"kind": "patch", "path": path, "move_to": move_to, "hunks": hunks})
+            continue
+        if line.startswith("*** Add File: "):
+            path = line[len("*** Add File: ") :].strip()
+            index += 1
+            added_lines = []
+            while index < len(lines) and not lines[index].startswith("*** "):
+                if lines[index].startswith("+"):
+                    added_lines.append(lines[index][1:])
+                index += 1
+            changes.append({"kind": "write", "path": path, "content": _join_lines(added_lines)})
+            continue
+        if line.startswith("*** Delete File: "):
+            path = line[len("*** Delete File: ") :].strip()
+            changes.append({"kind": "delete", "path": path})
+        index += 1
+    return changes
+
+
+def _parse_unified_diff_patch(patch_text):
+    lines = patch_text.splitlines()
+    changes = []
+    index = 0
+    while index < len(lines):
+        if not lines[index].startswith("--- "):
+            index += 1
+            continue
+        old_path = lines[index][4:].strip()
+        index += 1
+        if index >= len(lines) or not lines[index].startswith("+++ "):
+            break
+        new_path = lines[index][4:].strip()
+        index += 1
+        hunks = []
+        while index < len(lines) and not lines[index].startswith("--- "):
+            if lines[index].startswith("@@"):
+                index += 1
+                old_lines = []
+                new_lines = []
+                while index < len(lines) and not lines[index].startswith("@@") and not lines[index].startswith("--- "):
+                    if lines[index].startswith("\\"):
+                        index += 1
+                        continue
+                    prefix = lines[index][:1]
+                    content = lines[index][1:] if lines[index] else ""
+                    if prefix == " ":
+                        old_lines.append(content)
+                        new_lines.append(content)
+                    elif prefix == "-":
+                        old_lines.append(content)
+                    elif prefix == "+":
+                        new_lines.append(content)
+                    index += 1
+                hunks.append({"old_lines": old_lines, "new_lines": new_lines})
+                continue
+            index += 1
+        old_path = old_path[2:] if old_path.startswith("a/") else old_path
+        new_path = new_path[2:] if new_path.startswith("b/") else new_path
+        if old_path == "/dev/null":
+            changes.append({"kind": "write", "path": new_path, "content": _apply_line_hunks("", hunks, new_path)})
+        elif new_path == "/dev/null":
+            changes.append({"kind": "delete", "path": old_path})
+        else:
+            changes.append({"kind": "patch", "path": old_path, "move_to": None, "hunks": hunks})
+    return changes
+
+
+def _parse_codex_patch_changes(patch_text, session_cwd, repo_root):
+    if not isinstance(patch_text, str) or not patch_text.strip():
+        return []
+    raw_changes = (
+        _parse_openai_patch(patch_text)
+        if "*** Begin Patch" in patch_text
+        else _parse_unified_diff_patch(patch_text)
+    )
+    changes = []
+    for change in raw_changes:
+        abs_path = _normalize_write_path(change.get("path"), session_cwd)
+        rel_path = _path_in_repo(abs_path, repo_root)
+        if rel_path is None:
+            continue
+        normalized = dict(change)
+        normalized["path"] = abs_path
+        normalized["rel_path"] = str(rel_path)
+        if change.get("move_to"):
+            move_abs = _normalize_write_path(change["move_to"], session_cwd)
+            move_rel = _path_in_repo(move_abs, repo_root)
+            if move_rel is None:
+                continue
+            normalized["move_to"] = move_abs
+            normalized["move_to_rel_path"] = str(move_rel)
+        changes.append(normalized)
+    return changes
+
+
+def _operation_fingerprint(operation):
+    serializable_changes = []
+    for change in operation["changes"]:
+        item = {"kind": change["kind"], "rel_path": change.get("rel_path")}
+        for key in (
+            "content",
+            "old_string",
+            "new_string",
+            "replace_all",
+            "move_to_rel_path",
+            "hunks",
+        ):
+            if key in change:
+                item[key] = change[key]
+        serializable_changes.append(item)
+    return json.dumps(
+        {
+            "timestamp_raw": operation["timestamp_raw"],
+            "agent": operation["agent"],
+            "tool": operation["tool"],
+            "changes": serializable_changes,
+        },
+        sort_keys=True,
+    )
+
+
+def _collect_replay_operations(repo_root):
+    """Collect replayable file mutations from trajectories discoverable for repo_root."""
+    repo_root = Path(repo_root).resolve()
+    operations = []
+    for record in trajectoriz_local_records(str(repo_root)):
+        agent_name = record.agent
+        traj = trajectoriz_parse_record(record)
+        if traj is None:
+            continue
+        traj_source = str(record.source)
+        for step in traj.steps:
+            timestamp = step.get("timestamp")
+            if not timestamp:
+                continue
+            for call in _successful_tool_calls(step):
+                tool_name = call.get("function_name")
+                args = call.get("arguments") or {}
+                changes = []
+                write_spec = _REPLAY_WRITE_TOOLS.get(tool_name)
+                edit_spec = _REPLAY_EDIT_TOOLS.get(tool_name)
+                if write_spec is not None:
+                    path_key, content_key = write_spec
+                    raw_path = args.get(path_key) or args.get("file_path")
+                    content = args.get(content_key)
+                    abs_path = _normalize_write_path(raw_path, traj.cwd)
+                    rel_path = _path_in_repo(abs_path, repo_root)
+                    if rel_path is None or content is None:
+                        continue
+                    changes = [{
+                        "kind": "write",
+                        "path": abs_path,
+                        "rel_path": str(rel_path),
+                        "content": content,
+                    }]
+                elif edit_spec is not None:
+                    path_key, old_key, new_key, replace_key = edit_spec
+                    raw_path = args.get(path_key) or args.get("file_path")
+                    abs_path = _normalize_write_path(raw_path, traj.cwd)
+                    rel_path = _path_in_repo(abs_path, repo_root)
+                    if rel_path is None:
+                        continue
+                    changes = [{
+                        "kind": "edit",
+                        "path": abs_path,
+                        "rel_path": str(rel_path),
+                        "old_string": args.get(old_key, ""),
+                        "new_string": args.get(new_key, ""),
+                        "replace_all": bool(args.get(replace_key, False)),
+                    }]
+                elif tool_name == "apply_patch":
+                    patch_text = args.get("patch") or args.get("input", "")
+                    changes = _parse_codex_patch_changes(patch_text, traj.cwd, repo_root)
+                if not changes:
+                    continue
+                operations.append({
+                    "timestamp": _parse_iso(timestamp),
+                    "timestamp_raw": timestamp,
+                    "agent": agent_name,
+                    "trajectory": traj_source,
+                    "tool": tool_name,
+                    "changes": changes,
+                })
+    operations.sort(key=lambda item: (item["timestamp"], item["trajectory"], item["tool"]))
+    deduped = []
+    seen = set()
+    for operation in operations:
+        fingerprint = _operation_fingerprint(operation)
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        deduped.append(operation)
+    return deduped
+
+
+def _git_run(repo_root, args, env=None):
+    return subprocess.run(
+        ["git"] + args,
+        cwd=str(repo_root),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _ensure_clean_worktree(repo_root):
+    status = _git_run(repo_root, ["status", "--porcelain"])
+    if status.returncode != 0:
+        raise RuntimeError(status.stderr.strip() or "git status failed")
+    if status.stdout.strip():
+        raise RuntimeError("git worktree is not clean; replay-trajectories requires a clean repository")
+
+
+def _apply_replay_change(change):
+    kind = change["kind"]
+    path = Path(change["path"])
+    if kind == "write":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        previous = path.read_text() if path.exists() else None
+        if previous == change["content"]:
+            return False, [change["rel_path"]]
+        path.write_text(change["content"])
+        return True, [change["rel_path"]]
+    if kind == "edit":
+        if not path.exists():
+            raise RuntimeError(f"cannot edit missing file {change['rel_path']}")
+        current = path.read_text()
+        old_string = change["old_string"]
+        if old_string not in current:
+            if change["new_string"] in current:
+                return False, [change["rel_path"]]
+            replaced = _replace_between_anchors(current, old_string, change["new_string"])
+            if replaced is None:
+                print(
+                    f"warning: skipping unreplayable edit for {change['rel_path']}",
+                    file=sys.stderr,
+                )
+                return False, [change["rel_path"]]
+            if replaced == current:
+                return False, [change["rel_path"]]
+            path.write_text(replaced)
+            return True, [change["rel_path"]]
+        updated = (
+            current.replace(old_string, change["new_string"])
+            if change["replace_all"]
+            else current.replace(old_string, change["new_string"], 1)
+        )
+        if updated == current:
+            return False, [change["rel_path"]]
+        path.write_text(updated)
+        return True, [change["rel_path"]]
+    if kind == "patch":
+        current = path.read_text() if path.exists() else ""
+        try:
+            updated = _apply_line_hunks(current, change["hunks"], change["rel_path"])
+        except RuntimeError:
+            print(
+                f"warning: skipping unreplayable patch for {change['rel_path']}",
+                file=sys.stderr,
+            )
+            return False, [change["rel_path"]]
+        if change.get("move_to"):
+            target_path = Path(change["move_to"])
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists():
+                path.unlink()
+            target_path.write_text(updated)
+            return True, [change["rel_path"], change["move_to_rel_path"]]
+        if updated == current:
+            return False, [change["rel_path"]]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(updated)
+        return True, [change["rel_path"]]
+    if kind == "delete":
+        if not path.exists():
+            return False, [change["rel_path"]]
+        path.unlink()
+        return True, [change["rel_path"]]
+    raise RuntimeError(f"unsupported replay change kind: {kind}")
+
+
+def _staged_replay_commit_message(repo_root, agent, staged_paths):
+    diff = _git_run(repo_root, ["diff", "--cached", "--numstat", "--", *staged_paths])
+    if diff.returncode != 0:
+        raise RuntimeError(diff.stderr.strip() or "git diff --cached failed")
+    added = 0
+    deleted = 0
+    for line in diff.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        a, d, _path = parts[:3]
+        added += int(a) if a.isdigit() else 0
+        deleted += int(d) if d.isdigit() else 0
+    line_count = added + deleted
+    if len(staged_paths) == 1:
+        path_label = staged_paths[0]
+    else:
+        path_label = ", ".join(staged_paths[:2])
+        if len(staged_paths) > 2:
+            path_label += f", +{len(staged_paths) - 2} more"
+    return f"replay: {agent} {path_label} ({line_count} lines changed)"
+
+
+def replay_trajectories(repo_path, trajectory_dir=None):
+    """
+    Replay file mutation events from stored trajectories and commit them chronologically.
+
+    Supports whole-file writes, Edit operations, and Codex apply_patch calls.
+    The repository must be clean. Returns a list of created commits, one per
+    effective mutation event.
+    """
+    repo_root = Path(repo_path).resolve()
+    if trajectory_dir is not None:
+        raise ValueError("--trajectory-dir is no longer supported; replay-trajectories now follows trajectoriz local discovery")
+
+    _ensure_clean_worktree(repo_root)
+    operations = _collect_replay_operations(repo_root)
+    if not operations:
+        return []
+
+    commits = []
+    for operation in operations:
+        changed = False
+        staged_paths = []
+        for change in operation["changes"]:
+            change_changed, change_paths = _apply_replay_change(change)
+            changed = changed or change_changed
+            staged_paths.extend(change_paths)
+        staged_paths = list(dict.fromkeys(staged_paths))
+        if not changed:
+            continue
+        add_result = _git_run(repo_root, ["add", "-A", "--", *staged_paths])
+        if add_result.returncode != 0:
+            raise RuntimeError(add_result.stderr.strip() or f"git add failed for {staged_paths}")
+
+        env = os.environ.copy()
+        env["GIT_AUTHOR_DATE"] = operation["timestamp_raw"]
+        env["GIT_COMMITTER_DATE"] = operation["timestamp_raw"]
+        commit_message = _staged_replay_commit_message(repo_root, operation["agent"], staged_paths)
+        commit_result = _git_run(repo_root, ["commit", "-m", commit_message], env=env)
+        if commit_result.returncode != 0:
+            raise RuntimeError(commit_result.stderr.strip() or f"git commit failed for {staged_paths}")
+
+        rev_parse = _git_run(repo_root, ["rev-parse", "HEAD"])
+        commit_hash = rev_parse.stdout.strip() if rev_parse.returncode == 0 else None
+        commits.append({
+            "commit": commit_hash,
+            "agent": operation["agent"],
+            "file": staged_paths[0] if len(staged_paths) == 1 else f"{len(staged_paths)} files",
+            "files": staged_paths,
+            "timestamp": operation["timestamp_raw"],
+            "trajectory": operation["trajectory"],
+        })
+    return commits
+
+
+# ---------------------------------------------------------------------------
 # collection webhook
 # ---------------------------------------------------------------------------
 
@@ -1743,6 +2304,17 @@ def main(argv=None):
         "--output", "-o",
         default=None,
         help="Output file (default: stdout)",
+    )
+
+    p_replay = subparsers.add_parser(
+        "replay-trajectories",
+        help="Replay discovered trajectory mutations in chronological order and commit them",
+    )
+    p_replay.add_argument(
+        "repo",
+        nargs="?",
+        default=".",
+        help="Path to the git repository (default: current directory)",
     )
 
     subparsers.add_parser(
@@ -2016,6 +2588,15 @@ def main(argv=None):
         for r in results:
             dest = r.get('dest', '')
             print(f"{r['trajectory'][:36]:<38}  {r['status']:<16}  {dest}")
+        return
+
+    if args.command == "replay-trajectories":
+        results = replay_trajectories(args.repo)
+        if not results:
+            print("No write events were replayed.")
+            return
+        for r in results:
+            print(f"{r['commit'][:12]}  {r['timestamp']}  {r['agent']:<12}  {r['file']}")
         return
 
     trajectory_path = resolve_trajectory_path(args.trajectory, str(claude_dir))

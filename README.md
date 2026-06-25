@@ -286,6 +286,37 @@ python -m reproducible_trajectories add-trajectories-to-repo .
 python -m reproducible_trajectories add-trajectories-to-repo . --dry-run
 ```
 
+### replay-trajectories
+
+`replay-trajectories` replays file mutation events from trajectories discoverable for a repository via `trajectoriz` local search semantics, orders them by event timestamp, applies them to the target repository, and creates one git commit per replayed event.
+
+Supported mutation types:
+- whole-file writes
+- Claude / pi `Edit` operations
+- Codex `apply_patch` operations (OpenAI patch format and unified diff)
+
+Safety constraints:
+- the repository must have a clean worktree before replay starts
+- only in-repo mutations are replayed
+- duplicate replay events discovered from mirrored trajectory stores are ignored
+- source trajectory events that originally failed are skipped
+- unreplayable edits or patches are skipped with a warning
+- commit messages include the agent name, replayed file path(s), and total staged line delta, e.g. `replay: claude mc_repl.py (42 lines changed)`
+- author and committer dates are both set to the original event timestamp
+
+```
+usage: python -m reproducible_trajectories replay-trajectories [-h]
+                                                     [repo]
+
+positional arguments:
+  repo                  path to the git repository (default: current directory)
+```
+
+**Example — replay trajectories discoverable for the current repository:**
+```
+python -m reproducible_trajectories replay-trajectories .
+```
+
 ## Commit conventions
 
 The commit message should contain:

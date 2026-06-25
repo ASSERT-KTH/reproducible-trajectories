@@ -1253,3 +1253,163 @@ class TestCollectCodexModifications:
         mods = _collect_codex_modifications(events, session_cwd="/repo")
         assert "/repo/reproducible_trajectories/__init__.py" in mods
         assert mods["/repo/reproducible_trajectories/__init__.py"]["tool"] == "apply_patch"
+
+
+class TestReplayTrajectories:
+    def _init_repo(self, path):
+        subprocess.run(["git", "init", str(path)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            check=True, capture_output=True, cwd=str(path),
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            check=True, capture_output=True, cwd=str(path),
+        )
+        return path
+
+    def _commit_all(self, repo, message):
+        subprocess.run(["git", "add", "."], check=True, capture_output=True, cwd=str(repo))
+        subprocess.run(
+            ["git", "commit", "-m", message],
+            check=True, capture_output=True, cwd=str(repo),
+        )
+
+    def test_collect_replay_writes_orders_multiple_agents(self, tmp_path):
+        from reproducible_trajectories.trajectory import _collect_replay_writes
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        traj_dir = repo / "trajectories"
+        traj_dir.mkdir()
+
+        claude_traj = traj_dir / "claude.jsonl"
+        _write_jsonl(
+            claude_traj,
+            [
+                _make_tool_use_event(
+                    "e1",
+                    "t1",
+                    "Write",
+                    {"file_path": str(repo / "foo.md"), "content": "from claude\n"},
+                    session_id="claude-sess",
+                    cwd=str(repo),
+                )
+            ],
+        )
+
+        codex_traj = traj_dir / "codex.jsonl"
+        _write_jsonl(
+            codex_traj,
+            [
+                {
+                    "timestamp": "2026-01-01T00:00:02.000Z",
+                    "type": "session_meta",
+                    "payload": {"id": "codex-sess", "cwd": str(repo)},
+                },
+                {
+                    "timestamp": "2026-01-01T00:00:02.000Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "call_id": "call-1",
+                        "name": "write_file",
+                        "arguments": json.dumps({"path": "foo.md", "content": "from codex\n"}),
+                    },
+                },
+                {
+                    "timestamp": "2026-01-01T00:00:03.000Z",
+                    "type": "event_msg",
+                    "payload": {"type": "task_complete"},
+                },
+            ],
+        )
+
+        writes = _collect_replay_writes(traj_dir, repo)
+
+        assert [w["agent"] for w in writes] == ["claude", "codex"]
+        assert [w["rel_path"] for w in writes] == ["foo.md", "foo.md"]
+        assert writes[0]["content"] == "from claude\n"
+        assert writes[1]["content"] == "from codex\n"
+
+    def test_replay_trajectories_commits_in_timestamp_order(self, tmp_path):
+        from reproducible_trajectories.trajectory import replay_trajectories
+
+        repo = self._init_repo(tmp_path / "repo")
+        (repo / "README.md").write_text("seed\n")
+        traj_dir = repo / "trajectories"
+        traj_dir.mkdir()
+
+        _write_jsonl(
+            traj_dir / "claude.jsonl",
+            [
+                {
+                    "parentUuid": None,
+                    "isSidechain": False,
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "t1",
+                                "name": "Write",
+                                "input": {
+                                    "file_path": str(repo / "foo.md"),
+                                    "content": "first\n",
+                                },
+                            }
+                        ],
+                    },
+                    "uuid": "u1",
+                    "timestamp": "2026-01-01T00:00:01.000Z",
+                    "sessionId": "claude-sess",
+                    "cwd": str(repo),
+                }
+            ],
+        )
+
+        _write_jsonl(
+            traj_dir / "codex.jsonl",
+            [
+                {
+                    "timestamp": "2026-01-01T00:00:02.000Z",
+                    "type": "session_meta",
+                    "payload": {"id": "codex-sess", "cwd": str(repo)},
+                },
+                {
+                    "timestamp": "2026-01-01T00:00:02.000Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "call_id": "call-1",
+                        "name": "write_file",
+                        "arguments": json.dumps({"path": "foo.md", "content": "second\n"}),
+                    },
+                },
+                {
+                    "timestamp": "2026-01-01T00:00:03.000Z",
+                    "type": "event_msg",
+                    "payload": {"type": "task_complete"},
+                },
+            ],
+        )
+
+        self._commit_all(repo, "seed trajectories")
+
+        commits = replay_trajectories(repo)
+
+        assert len(commits) == 2
+        assert [c["agent"] for c in commits] == ["claude", "codex"]
+        assert (repo / "foo.md").read_text() == "second\n"
+
+        log = subprocess.run(
+            ["git", "log", "--format=%s|%aI", "--reverse"],
+            check=True,
+            capture_output=True,
+            cwd=str(repo),
+            text=True,
+        ).stdout.splitlines()
+
+        assert log[1] == "replay: claude|2026-01-01T00:00:01Z"
+        assert log[2] == "replay: codex|2026-01-01T00:00:02Z"
