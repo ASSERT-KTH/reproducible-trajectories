@@ -753,6 +753,185 @@ def verify_trajectories(repo_path, claude_dir=None):
 
 
 # ---------------------------------------------------------------------------
+# check-execution-reproducible
+# ---------------------------------------------------------------------------
+
+def _extract_tool_result_text(item):
+    raw = item.get("content", "")
+    if isinstance(raw, list):
+        return "".join(c.get("text", "") for c in raw if isinstance(c, dict))
+    return str(raw)
+
+
+def collect_bash_commands(sequence, tool_uses):
+    """
+    Return list of {command, recorded_output} for every Bash tool_use that has
+    a paired tool_result in the sequence.
+    """
+    result_by_id = {}
+    for s in sequence:
+        if s["seq_type"] == "tool_result":
+            item = s["item"]
+            result_by_id[item.get("tool_use_id", "")] = _extract_tool_result_text(item)
+
+    commands = []
+    for s in sequence:
+        if s["seq_type"] != "tool_use":
+            continue
+        item = s["item"]
+        if item.get("name") != "Bash":
+            continue
+        tid = item.get("id", "")
+        cmd = item.get("input", {}).get("command", "")
+        if not cmd:
+            continue
+        if tid in result_by_id:
+            commands.append({"command": cmd, "recorded_output": result_by_id[tid]})
+    return commands
+
+
+def check_execution_reproducible(trajectory_path, repo_path=None, exec_cwd=None):
+    """
+    Check whether a trajectory satisfies both execution-reproducibility criteria:
+
+    1. Edit criterion  — all Write/Edit ops, replayed from the commit that
+       references this trajectory, reproduce the actual committed file states.
+       Requires repo_path; skipped (status 'no_repo') when omitted.
+
+    2. Command criterion — every Bash command, re-executed verbatim in exec_cwd
+       (or the trajectory's recorded cwd when exec_cwd is None), produces
+       byte-identical stdout+stderr to the recorded tool_result output.
+
+    Returns:
+      {
+        "edit_criterion":    {"status": str, "files": [...]},
+        "command_criterion": {"status": str, "commands": [...]},
+        "execution_reproducible": bool | None,   # None = no criterion applicable
+      }
+
+    Status values (edit):   no_repo | no_commit | no_operations | reproducible | not_reproducible
+    Status values (command): no_commands | reproducible | not_reproducible
+    """
+    events = parse_trajectory(trajectory_path)
+    sequence, tool_uses = build_sequence(events)
+    _, session_cwd = get_session_info(events)
+    run_cwd = exec_cwd or session_cwd or os.getcwd()
+
+    # ── criterion 2: command re-execution ────────────────────────────────────
+    bash_entries = collect_bash_commands(sequence, tool_uses)
+    command_results = []
+    for entry in bash_entries:
+        cmd = entry["command"]
+        expected = entry["recorded_output"]
+        proc = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, cwd=run_cwd,
+        )
+        actual = proc.stdout + proc.stderr
+        command_results.append({
+            "command": cmd,
+            "expected": expected,
+            "actual": actual,
+            "match": actual == expected,
+        })
+
+    if not command_results:
+        cmd_status = "no_commands"
+    elif all(r["match"] for r in command_results):
+        cmd_status = "reproducible"
+    else:
+        cmd_status = "not_reproducible"
+
+    # ── criterion 1: edit replay from commit ─────────────────────────────────
+    edit_status = "no_repo"
+    edit_files = []
+
+    if repo_path:
+        repo_path = str(Path(repo_path).resolve())
+        traj_abs = str(Path(trajectory_path).resolve())
+        claude_dir = str(Path.home() / ".claude")
+        edit_status = "no_commit"
+
+        for commit_hash, message in _get_commits(repo_path):
+            ref = _extract_trajectory_ref(message)
+            if not ref:
+                continue
+            ref_path = resolve_trajectory_path(ref, claude_dir)
+            if not os.path.exists(ref_path):
+                continue
+            if str(Path(ref_path).resolve()) != traj_abs:
+                continue
+
+            # Collect ops
+            ops = []
+            for s in sequence:
+                if s["seq_type"] != "tool_use":
+                    continue
+                item = s["item"]
+                if item.get("name") not in ("Write", "Edit", "NotebookEdit"):
+                    continue
+                ops.append({"tool": item["name"], "input": item.get("input", {})})
+
+            if not any(op["tool"] in ("Write", "Edit") for op in ops):
+                edit_status = "no_operations"
+                break
+
+            parent = _get_parent(repo_path, commit_hash)
+            initial_states = {}
+            file_rels = {}
+            for op in ops:
+                tool = op["tool"]
+                inp = op["input"]
+                fp = inp.get("notebook_path" if tool == "NotebookEdit" else "file_path", "")
+                if not fp or fp in initial_states:
+                    continue
+                rel = _rel(fp, session_cwd) if session_cwd else None
+                file_rels[fp] = rel
+                initial_states[fp] = (_file_at(repo_path, parent, rel)
+                                       if (rel and parent) else None)
+
+            simulated = _simulate_ops(ops, initial_states)
+            any_mismatch = False
+            for fp, sim_content in simulated.items():
+                rel = file_rels.get(fp)
+                if rel is None:
+                    edit_files.append({"file": fp, "status": "unverifiable"})
+                    continue
+                try:
+                    Path(fp).resolve().relative_to(repo_path)
+                except ValueError:
+                    edit_files.append({"file": rel, "status": "outside_repo"})
+                    continue
+                actual_content = _file_at(repo_path, commit_hash, rel)
+                if sim_content == actual_content:
+                    edit_files.append({"file": rel, "status": "match"})
+                else:
+                    edit_files.append({"file": rel, "status": "mismatch"})
+                    any_mismatch = True
+
+            edit_status = "not_reproducible" if any_mismatch else "reproducible"
+            break
+
+    # ── overall verdict ───────────────────────────────────────────────────────
+    _pass = {"reproducible"}
+    _neutral = {"no_repo", "no_commit", "no_operations", "no_commands"}
+    _fail = {"not_reproducible"}
+
+    criteria = [edit_status, cmd_status]
+    if any(s in _fail for s in criteria):
+        execution_reproducible = False
+    elif any(s in _pass for s in criteria):
+        execution_reproducible = True
+    else:
+        execution_reproducible = None  # no applicable criterion
+
+    return {
+        "edit_criterion": {"status": edit_status, "files": edit_files},
+        "command_criterion": {"status": cmd_status, "commands": command_results},
+        "execution_reproducible": execution_reproducible,
+    }
+
+
+# ---------------------------------------------------------------------------
 # find-reproducible-trajectories-claude (and future variants)
 # ---------------------------------------------------------------------------
 
@@ -2278,6 +2457,28 @@ def main(argv=None):
         help="Path to the git repository (default: current directory)",
     )
 
+    p_exec = subparsers.add_parser(
+        "check-execution-reproducible",
+        help="Check whether a trajectory satisfies both execution-reproducibility criteria",
+    )
+    p_exec.add_argument("trajectory", help="Path to trajectory JSONL file, or session ID")
+    p_exec.add_argument(
+        "--repo",
+        default=None,
+        help="Git repo to verify the edit criterion against (optional)",
+    )
+    p_exec.add_argument(
+        "--cwd",
+        default=None,
+        help="Working directory for command re-execution (default: trajectory cwd)",
+    )
+    p_exec.add_argument(
+        "--claude-dir",
+        default=None,
+        help="Path to .claude directory (default: ~/.claude)",
+    )
+    p_exec.add_argument("--json", action="store_true", help="Output results as JSON")
+
     subparsers.add_parser(
         "collect-trajectories",
         help="Find the most recent trajectory matching staged files, check reproducibility, and POST to API",
@@ -2527,6 +2728,35 @@ def main(argv=None):
             return
         for r in results:
             print(f"{r['commit']}  {r['status']:<22}  {r['trajectory']}  {r['short_message']}")
+        return
+
+    if args.command == "check-execution-reproducible":
+        traj_path = resolve_trajectory_path(args.trajectory, str(claude_dir))
+        result = check_execution_reproducible(
+            traj_path,
+            repo_path=args.repo,
+            exec_cwd=args.cwd,
+        )
+        if args.json:
+            print(json.dumps(result, indent=2))
+            return
+        ec = result["edit_criterion"]
+        cc = result["command_criterion"]
+        print(f"Edit criterion:    {ec['status']}")
+        for f in ec.get("files", []):
+            mark = "PASS" if f["status"] == "match" else f["status"].upper()
+            print(f"  [{mark}] {f['file']}")
+        print(f"Command criterion: {cc['status']}")
+        for c in cc.get("commands", []):
+            mark = "PASS" if c["match"] else "FAIL"
+            cmd_preview = c["command"][:60] + ("…" if len(c["command"]) > 60 else "")
+            print(f"  [{mark}] {cmd_preview}")
+            if not c["match"]:
+                print(f"    expected: {c['expected']!r}")
+                print(f"    actual:   {c['actual']!r}")
+        er = result["execution_reproducible"]
+        verdict = "True" if er else ("False" if er is False else "unknown (no criteria applicable)")
+        print(f"Execution reproducible: {verdict}")
         return
 
     if args.command == "add-trajectories-to-repo":

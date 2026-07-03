@@ -9,6 +9,8 @@ from reproducible_trajectories.trajectory import (
     add_trajectories_to_repo,
     open_source_trajectories,
     replay_trajectories,
+    collect_bash_commands,
+    check_execution_reproducible,
 )
 
 __all__ = [
@@ -20,4 +22,6 @@ __all__ = [
     "add_trajectories_to_repo",
     "open_source_trajectories",
     "replay_trajectories",
+    "collect_bash_commands",
+    "check_execution_reproducible",
 ]

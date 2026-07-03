@@ -1490,3 +1490,150 @@ class TestReplayTrajectories:
 
         assert len(commits) == 2
         assert (repo / "foo.md").read_text() == "final\n"
+
+
+# ---------------------------------------------------------------------------
+# check_execution_reproducible
+# ---------------------------------------------------------------------------
+
+from reproducible_trajectories.trajectory import (
+    collect_bash_commands,
+    check_execution_reproducible,
+)
+
+
+class TestCollectBashCommands:
+    def _make_sequence(self, commands_and_outputs):
+        """Build a minimal sequence from [(cmd, output), ...] pairs."""
+        from reproducible_trajectories.trajectory import build_sequence
+        events = []
+        for i, (cmd, out) in enumerate(commands_and_outputs):
+            tid = f"toolu_bash_{i:03d}"
+            events.append({
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "id": tid, "name": "Bash",
+                                 "input": {"command": cmd}}],
+                },
+            })
+            events.append({
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": tid,
+                                 "content": [{"type": "text", "text": out}]}],
+                },
+            })
+        return build_sequence(events)
+
+    def test_extracts_commands(self):
+        seq, tu = self._make_sequence([("echo hi", "hi\n"), ("echo bye", "bye\n")])
+        result = collect_bash_commands(seq, tu)
+        assert len(result) == 2
+        assert result[0]["command"] == "echo hi"
+        assert result[0]["recorded_output"] == "hi\n"
+        assert result[1]["command"] == "echo bye"
+
+    def test_ignores_non_bash_tools(self):
+        from reproducible_trajectories.trajectory import build_sequence
+        events = [
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "id": "t1", "name": "Read",
+                                 "input": {"file_path": "/foo"}}],
+                },
+            },
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": "t1",
+                                 "content": [{"type": "text", "text": "content"}]}],
+                },
+            },
+        ]
+        seq, tu = build_sequence(events)
+        assert collect_bash_commands(seq, tu) == []
+
+    def test_skips_bash_without_result(self):
+        from reproducible_trajectories.trajectory import build_sequence
+        events = [
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "id": "t1", "name": "Bash",
+                                 "input": {"command": "echo hi"}}],
+                },
+            },
+        ]
+        seq, tu = build_sequence(events)
+        assert collect_bash_commands(seq, tu) == []
+
+
+class TestCheckExecutionReproducible:
+    REPRO = FIXTURES / "exec_repro_trajectory.jsonl"
+    NOT_REPRO = FIXTURES / "exec_not_repro_trajectory.jsonl"
+
+    def test_repro_fixture_passes_command_criterion(self):
+        result = check_execution_reproducible(str(self.REPRO))
+        assert result["command_criterion"]["status"] == "reproducible"
+        assert all(c["match"] for c in result["command_criterion"]["commands"])
+
+    def test_repro_fixture_execution_reproducible_true(self):
+        result = check_execution_reproducible(str(self.REPRO))
+        assert result["execution_reproducible"] is True
+
+    def test_not_repro_fixture_fails_command_criterion(self):
+        result = check_execution_reproducible(str(self.NOT_REPRO))
+        assert result["command_criterion"]["status"] == "not_reproducible"
+        assert not result["command_criterion"]["commands"][0]["match"]
+
+    def test_not_repro_fixture_execution_reproducible_false(self):
+        result = check_execution_reproducible(str(self.NOT_REPRO))
+        assert result["execution_reproducible"] is False
+
+    def test_no_repo_gives_no_repo_edit_status(self):
+        result = check_execution_reproducible(str(self.REPRO))
+        assert result["edit_criterion"]["status"] == "no_repo"
+
+    def test_actual_output_captured(self):
+        result = check_execution_reproducible(str(self.NOT_REPRO))
+        cmd_entry = result["command_criterion"]["commands"][0]
+        assert cmd_entry["actual"] != cmd_entry["expected"]
+        assert cmd_entry["actual"].endswith("Z\n")
+
+    def test_repro_commands_list_has_three_entries(self):
+        result = check_execution_reproducible(str(self.REPRO))
+        assert len(result["command_criterion"]["commands"]) == 3
+
+    def test_trajectory_with_no_bash_commands(self):
+        result = check_execution_reproducible(str(FIXTURES / "simple_trajectory.jsonl"))
+        assert result["command_criterion"]["status"] == "no_commands"
+
+    def test_no_commands_no_repo_gives_none_verdict(self):
+        result = check_execution_reproducible(str(FIXTURES / "simple_trajectory.jsonl"))
+        assert result["execution_reproducible"] is None
+
+    def test_cli_json_output(self):
+        r = subprocess.run(
+            ["python", "-m", "reproducible_trajectories",
+             "check-execution-reproducible", "--json", str(self.REPRO)],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        data = json.loads(r.stdout)
+        assert data["execution_reproducible"] is True
+
+    def test_cli_table_output(self):
+        r = subprocess.run(
+            ["python", "-m", "reproducible_trajectories",
+             "check-execution-reproducible", str(self.REPRO)],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        assert "Command criterion: reproducible" in r.stdout
+        assert "Execution reproducible: True" in r.stdout
