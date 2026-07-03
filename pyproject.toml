@@ -12,7 +12,7 @@ authors = [
     { name = "Martin Monperrus" },
 ]
 requires-python = ">=3.8"
-dependencies = ["trajectoriz>=0.26.0"]
+dependencies = ["trajectoriz>=0.40.0"]
 
 [project.urls]
 Homepage = "https://github.com/ASSERT-KTH/reproducible-trajectories"
